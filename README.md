@@ -30,7 +30,7 @@ sndbx build --list    # print the images build accepts
 
 `sndbx build claude` won't rebuild an existing `sndbx:base`. To pick up base changes, run `sndbx build base` before it.
 
-`sndbx` finds `images/` next to its own `bin/` directory, following symlinks. If you copy `bin/sndbx` out of the repo, set `images_dir` in the [settings](#configure).
+`sndbx` finds `images/` in the repo it was built from, wherever the binary is. If the repo moves, or the binary was built in another checkout or container, set `images_dir` in the [settings](#configure).
 
 To add an image, create `images/<name>/Dockerfile` starting with:
 
@@ -53,14 +53,12 @@ FROM ${TAG_PREFIX}:base
 
 ### Install
 
-Put `bin` on `PATH`, or symlink `bin/sndbx` into a directory on it, and source the bash completions:
+`sndbx` is written in Rust. Build and install it from the repo with [mise](https://mise.jdx.dev)'s Rust or any other recent toolchain, on the machine that runs it, and source the bash completions:
 
 ```sh
-export PATH="/path/to/sndbx/bin:$PATH"            # or: ln -s /path/to/sndbx/bin/sndbx ~/.local/bin/sndbx
+cargo install --path .                        # installs sndbx to ~/.cargo/bin
 source /path/to/sndbx/completions/_sndbx
 ```
-
-A copy of `bin/sndbx` works too, but `sndbx build` then needs `images_dir` in the settings.
 
 The completions complete arguments after `--` with docker's own completion, `docker __complete run`, and fall back to file names when docker doesn't have it.
 
@@ -70,7 +68,7 @@ Images are listed in `~/.config/sndbx/settings.yml`. The first run creates an ex
 
 ```yaml
 tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
-images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to images/ next to bin/; relative to ~/.config/sndbx
+images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to the repo's images/; relative to ~/.config/sndbx
 images:
   - name: claude
     tag: my-claude:latest # optional, defaults to <tag_prefix>:<name>
@@ -86,7 +84,7 @@ images:
     user: ubuntu
   - name: dsh
     user: ubuntu
-    ports: ["127.0.0.1:3080:3080"] # optional, always published; quote them, YAML reads 8080:22 as a number
+    ports: ["127.0.0.1:3080:3080"] # optional, always published; quote them
 ```
 
 ### Use
@@ -143,11 +141,12 @@ docker run --rm -it \
 ## Test
 
 ```sh
-rake                              # every test
-ruby test/completion_test.rb      # one file
+rake                              # rustfmt, clippy, unit tests, rubocop, then every test
+rake test                         # build, then every test
+ruby test/completion_test.rb      # one file, against the last build
 ```
 
-The tests run `bin/sndbx` with a temporary `HOME` and a fake `docker` that records its arguments, so they need neither Docker nor existing settings. The completion tests call `_sndbx` in bash 4 or newer, like the completions themselves.
+The tests are in Ruby. They run `target/debug/sndbx`, or the binary `SNDBX_BIN` names, with a temporary `HOME` and a fake `docker` that records its arguments, so they need neither Docker nor existing settings. The completion tests call `_sndbx` in bash 4 or newer, like the completions themselves.
 
 ## License
 

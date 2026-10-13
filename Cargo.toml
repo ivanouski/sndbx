@@ -1,0 +1,16 @@
+[package]
+name = "sndbx"
+version = "0.21.0"
+edition = "2024"
+description = "A small wrapper around docker run for running coding agents in a sandbox"
+license = "MIT"
+publish = false
+
+[dependencies]
+jiff = "0.2"
+yaml-rust2 = { version = "0.13", default-features = false }
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

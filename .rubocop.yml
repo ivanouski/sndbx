@@ -1,7 +1,6 @@
 AllCops:
   NewCops: enable
   Include:
-    - bin/sndbx
     - Rakefile
     - test/**/*.rb
 

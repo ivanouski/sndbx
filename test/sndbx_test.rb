@@ -112,8 +112,7 @@ class SndbxTest < Minitest::Test
   def test_unquoted_port
     write_settings(images: [{ name: 'claude', user: 'ubuntu', ports: [3000] }])
 
-    assert_error "image 'claude' has an unquoted port in #{settings_path}, YAML read it as 3000; " \
-                 'quote it, e.g. "3000"',
+    assert_error "image 'claude' has an unquoted port in #{settings_path}; quote it, e.g. \"3000\"",
                  sndbx('run', 'claude')
   end
 
@@ -676,7 +675,7 @@ class SndbxTest < Minitest::Test
 
     PTY.spawn({ 'HOME' => @home, 'PATH' => @bin, 'DOCKER_LOG' => @docker_log, 'DOCKER_IMAGES' => @docker_images,
                 'DOCKER_CONTAINERS' => @docker_containers },
-              RbConfig.ruby, BIN, 'exec', 'claude', 'gifted_mcnulty', 'bash', chdir: @work) do |out, _in, pid|
+              *COMMAND, 'exec', 'claude', 'gifted_mcnulty', 'bash', chdir: @work) do |out, _in, pid|
       begin
         out.read
       rescue Errno::EIO

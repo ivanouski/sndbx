@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative 'test_helper'
+require 'shellwords'
 
 class CompletionTest < Minitest::Test
   include SndbxTestHelper
@@ -42,7 +43,7 @@ class CompletionTest < Minitest::Test
     @docker_completions = File.join(@root, 'docker-completions')
     @docker_containers = File.join(@root, 'docker-containers')
 
-    write_executable(File.join(@bin, 'sndbx'), "#!/bin/sh\nexec '#{RbConfig.ruby}' '#{BIN}' \"$@\"\n")
+    write_executable(File.join(@bin, 'sndbx'), "#!/bin/sh\nexec #{Shellwords.join(COMMAND)} \"$@\"\n")
     write_executable(File.join(@bin, 'docker'), FAKE_DOCKER)
   end
 
