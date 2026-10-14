@@ -2,8 +2,9 @@ FROM ubuntu:26.10
 
 ARG USER=ubuntu
 ARG NODE_VERSION=26.9.0
-ARG RUBY_VERSION=4.0.7
 ARG PYTHON_VERSION=3.14.7
+ARG RUBY_VERSION=4.0.7
+ARG RUST_VERSION=1.99
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -25,8 +26,9 @@ RUN curl -fsSL https://mise.run | bash
 RUN eval "$(~/.local/bin/mise activate bash)" \
   && mise use --global \
     node@${NODE_VERSION} \
-    ruby@${RUBY_VERSION} \
     python@${PYTHON_VERSION} \
+    ruby@${RUBY_VERSION} \
+    rust@${RUST_VERSION} \
   && npm install -g npm@latest pnpm chromium playwright
 
 ENV PATH=${HOME}/.local/share/mise/shims:$PATH
