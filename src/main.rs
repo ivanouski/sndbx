@@ -1,15 +1,12 @@
 mod builder;
 mod commands;
 mod docker;
-mod options;
 mod paths;
 mod sandbox;
 mod settings;
 
 use std::io::Write;
 use std::process::ExitCode;
-
-pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug)]
 pub enum Error {
@@ -31,21 +28,8 @@ pub fn puts(line: &str) {
     let _ = writeln!(out, "{line}");
 }
 
-/// Prints help or a list and exits successfully
-pub fn exit_with(text: &str) -> ! {
-    let mut out = std::io::stdout().lock();
-    let _ = out.write_all(text.as_bytes());
-    let _ = out.flush();
-    std::process::exit(0)
-}
-
 fn main() -> ExitCode {
-    let args = std::env::args_os()
-        .skip(1)
-        .map(|arg| arg.to_string_lossy().into_owned())
-        .collect();
-
-    match commands::cli(args) {
+    match commands::cli() {
         Ok(()) => ExitCode::SUCCESS,
         Err(Error::Message(message)) => {
             eprintln!("Error: {message}.");
