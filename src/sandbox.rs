@@ -1,5 +1,7 @@
 use crate::docker::{IMAGE_LABEL, check_docker, docker_exec, image_exists};
-use crate::paths::{basename, expand_path, identical, is_dir, join};
+use std::path::{Path, PathBuf};
+
+use crate::paths::{expand_path, identical, join, normalize};
 use crate::settings::Image;
 use crate::{Result, error, paths};
 
@@ -15,7 +17,7 @@ pub struct Options {
 }
 
 struct Volume {
-    source: String,
+    source: PathBuf,
     target: String,
     options: Option<String>,
 }
@@ -86,11 +88,15 @@ impl Sandbox {
         self.volumes
             .iter()
             .map(|volume| {
-                let mut parts = vec![volume.source.as_str(), volume.target.as_str()];
-                parts.extend(volume.options.as_deref());
+                let mut parts = vec![volume.source.display().to_string(), volume.target.clone()];
+                parts.extend(volume.options.clone());
                 parts.join(":")
             })
-            .chain([format!("{}:{}", self.image.config_dir, self.image.config_target)])
+            .chain([format!(
+                "{}:{}",
+                self.image.config_dir.display(),
+                self.image.config_target
+            )])
             .flat_map(|volume| [String::from("-v"), volume])
             .collect()
     }
@@ -98,7 +104,7 @@ impl Sandbox {
     fn directory_targets(&self) -> Vec<&str> {
         self.volumes
             .iter()
-            .filter(|volume| is_dir(&volume.source))
+            .filter(|volume| volume.source.is_dir())
             .map(|volume| volume.target.as_str())
             .collect()
     }
@@ -146,7 +152,7 @@ fn volumes(specs: &[String]) -> Result<Vec<Volume>> {
         .map(|spec| parse_volume(spec))
         .collect::<Result<Vec<_>>>()?;
     if !volumes.iter().any(|volume| workspace(&volume.target)) {
-        volumes.insert(0, parse_volume(&paths::current_dir())?);
+        volumes.insert(0, parse_volume(&paths::current_dir().to_string_lossy())?);
     }
 
     let mut targets: Vec<(&str, usize)> = Vec::new();
@@ -172,23 +178,27 @@ fn parse_volume(spec: &str) -> Result<Volume> {
     }
 
     let source = expand_path(parts[0], None);
-    if !paths::exists(&source) {
-        return error(format!("{source} does not exist"));
+    if !source.exists() {
+        return error(format!("{} does not exist", source.display()));
     }
-    if [paths::home().as_str(), "/"].iter().any(|dir| identical(dir, &source)) {
-        return error(format!("refusing to mount {source}"));
+    if [&paths::home(), Path::new("/")]
+        .iter()
+        .any(|dir| identical(dir, &source))
+    {
+        return error(format!("refusing to mount {}", source.display()));
     }
 
     let target = if let Some(target) = parts.get(1) {
         if !target.starts_with('/') {
             return error(format!("invalid volume '{spec}', DST must be an absolute path"));
         }
-        expand_path(target, None)
+        container_path(target)
     } else {
-        if !is_dir(&source) {
-            return error(format!("{source} is not a directory"));
+        if !source.is_dir() {
+            return error(format!("{} is not a directory", source.display()));
         }
-        mount_target(basename(&source))
+        // Not the root, it's refused above
+        mount_target(&source.file_name().unwrap_or_default().to_string_lossy())
     };
 
     Ok(Volume {
@@ -200,7 +210,7 @@ fn parse_volume(spec: &str) -> Result<Volume> {
 
 fn workdir_target(name: &str) -> String {
     if name.starts_with('/') {
-        expand_path(name, None)
+        container_path(name)
     } else {
         mount_target(name)
     }
@@ -263,6 +273,11 @@ fn port_numbers(parts: &[&str]) -> Vec<u64> {
 
 fn mount_target(name: &str) -> String {
     join(&[MOUNT_ROOT, name])
+}
+
+/// An absolute path in the container without `.`, `..` or repeated slashes
+fn container_path(path: &str) -> String {
+    normalize(Path::new(path)).to_string_lossy().into_owned()
 }
 
 #[cfg(test)]

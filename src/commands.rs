@@ -6,7 +6,7 @@ use crate::docker::{self, check_container, check_docker, docker_exec, running_co
 use crate::options::{Event, Parser, Switch, integer};
 use crate::sandbox::{MOUNT_ROOT, Options, Sandbox};
 use crate::settings::{self, Settings};
-use crate::{Error, Result, VERSION, error, exit_with, paths, puts};
+use crate::{Error, Result, VERSION, error, exit_with, puts};
 
 const COMMANDS: [&str; 5] = ["run", "build", "exec", "resume", "logs"];
 
@@ -70,7 +70,7 @@ fn run(mut args: Vec<String>) -> Result<()> {
     let path = settings::path();
     let separators = lines(&[
         "",
-        &format!("Runs a sandboxed image from {path}."),
+        &format!("Runs a sandboxed image from {}.", path.display()),
         &format!("Mounts the current directory unless a volume is mounted in {MOUNT_ROOT}."),
         "Passes DOCKER_ARGS to docker run after the image's docker_args.",
         "",
@@ -135,7 +135,7 @@ fn run(mut args: Vec<String>) -> Result<()> {
             } => options.ports.extend(value),
             Event::Opt { long: "keep", .. } => options.keep = true,
             Event::Opt { long: "list", .. } => {
-                if paths::exists(&settings::path()) {
+                if settings::path().exists() {
                     print_lines(&Settings::default().image_names()?);
                 }
                 exit_with("");
@@ -358,7 +358,10 @@ fn logs(args: Vec<String>) -> Result<()> {
     let log_path = docker::log_path();
     let separators = lines(&[
         "",
-        &format!("Follows {log_path}, the docker commands sndbx ran, like tail -f."),
+        &format!(
+            "Follows {}, the docker commands sndbx ran, like tail -f.",
+            log_path.display()
+        ),
         "",
     ]);
     let mut parser = Parser::new(
@@ -399,12 +402,13 @@ fn logs(args: Vec<String>) -> Result<()> {
     if !positionals.is_empty() {
         return error("expected no arguments");
     }
-    if !paths::exists(&log_path) {
-        return error(format!("no log yet at {log_path}"));
+    if !log_path.exists() {
+        return error(format!("no log yet at {}", log_path.display()));
     }
 
     let e = Command::new(TAIL)
-        .args(["-n", &lines_count.to_string(), "-f", &log_path])
+        .args(["-n", &lines_count.to_string(), "-f"])
+        .arg(&log_path)
         .exec();
     if e.kind() == std::io::ErrorKind::NotFound {
         return error(format!("{TAIL} is not installed"));

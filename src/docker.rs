@@ -1,16 +1,17 @@
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use crate::paths::{join, shell_join};
+use crate::paths::shell_join;
 use crate::{Error, Result, error, paths};
 
 const DOCKER: &str = "docker";
 pub const IMAGE_LABEL: &str = "sndbx.image";
 
-pub fn log_path() -> String {
-    join(&[&paths::home(), ".local", "state", "sndbx", "sndbx.log"])
+pub fn log_path() -> PathBuf {
+    paths::home().join(".local/state/sndbx/sndbx.log")
 }
 
 pub fn check_docker() -> Result<()> {
@@ -89,13 +90,13 @@ fn log_command(args: &[String]) {
     command.extend_from_slice(args);
     let line = format!("{} {}\n", jiff::Zoned::now().strftime("%FT%T%:z"), shell_join(&command));
 
-    let written = std::path::Path::new(&path)
+    let written = path
         .parent()
         .map_or(Ok(()), std::fs::create_dir_all)
         .and_then(|()| OpenOptions::new().create(true).append(true).open(&path))
         .and_then(|mut file| file.write_all(line.as_bytes()));
     if let Err(e) = written {
-        eprintln!("Warning: can't write {path}: {e}");
+        eprintln!("Warning: can't write {}: {e}", path.display());
     }
 }
 

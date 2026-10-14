@@ -1,4 +1,5 @@
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
@@ -24,18 +25,18 @@ images:
 # images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to the sndbx repo's images/
 ";
 
-pub fn dir() -> String {
-    join(&[&paths::home(), ".config", "sndbx"])
+pub fn dir() -> PathBuf {
+    paths::home().join(".config/sndbx")
 }
 
-pub fn path() -> String {
-    join(&[&dir(), "settings.yml"])
+pub fn path() -> PathBuf {
+    dir().join("settings.yml")
 }
 
 pub struct Image {
     pub name: String,
     pub tag: String,
-    pub config_dir: String,
+    pub config_dir: PathBuf,
     pub config_target: String,
     pub ports: Vec<String>,
     pub docker_args: Vec<String>,
@@ -78,6 +79,7 @@ pub struct Settings {
 impl Settings {
     pub fn image(&mut self, name: &str) -> Result<Image> {
         let path = path();
+        let path = path.display();
         let tag_prefix = self.tag_prefix()?;
         let Some(entry) = self.images()?.iter().find(|entry| entry.name == name) else {
             return error(format!(
@@ -120,7 +122,7 @@ impl Settings {
 
     /// The default finds the repo's images as long as it's where the binary was built.
     /// Doesn't create the settings file
-    pub fn images_dir(&mut self) -> Result<String> {
+    pub fn images_dir(&mut self) -> Result<PathBuf> {
         let images_dir = self.existing()?.and_then(|settings| settings.images_dir.as_deref());
         Ok(match images_dir {
             Some(dir) => expand_path(dir, Some(&self::dir())),
@@ -134,7 +136,7 @@ impl Settings {
 
     /// The settings without creating the file, `None` when there's none
     fn existing(&mut self) -> Result<Option<&File>> {
-        if !paths::exists(&path()) {
+        if !path().exists() {
             return Ok(None);
         }
         self.settings().map(Some)
@@ -151,11 +153,13 @@ impl Settings {
 /// Reads and validates the settings, creating an example when there's none
 fn load() -> Result<File> {
     let path = path();
-    if !paths::exists(&path) {
-        create_example()?;
+    if !path.exists() {
+        create_example(&path)?;
     }
 
-    let content = std::fs::read_to_string(&path).map_err(|e| Error::Message(format!("can't read {path}: {e}")))?;
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| Error::Message(format!("can't read {}: {e}", path.display())))?;
+    let path = path.display();
     let settings = parse(&content).map_err(|e| Error::Message(format!("invalid {path}: {e}")))?;
 
     if settings
@@ -187,14 +191,14 @@ fn valid_tag_prefix(prefix: &str) -> bool {
     words_valid && !prefix.is_empty()
 }
 
-fn create_example() -> Result<()> {
-    let path = path();
+fn create_example(path: &Path) -> Result<()> {
     std::fs::create_dir_all(dir())
-        .and_then(|()| std::fs::write(&path, EXAMPLE))
-        .map_err(|e| Error::Message(format!("can't create {path}: {e}")))?;
+        .and_then(|()| std::fs::write(path, EXAMPLE))
+        .map_err(|e| Error::Message(format!("can't create {}: {e}", path.display())))?;
 
     Err(Error::Abort(format!(
-        "Created an example config at {path}, edit it and run again."
+        "Created an example config at {}, edit it and run again.",
+        path.display()
     )))
 }
 

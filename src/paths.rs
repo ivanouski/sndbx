@@ -1,51 +1,41 @@
-//! Ruby's path and shell helpers that sndbx relies on: `File.expand_path`, `File.join`,
-//! `File.identical?` and `Shellwords.join`.
+//! Path and shell helpers. Host paths are `PathBuf`s; paths inside the container, like mount targets,
+//! are `String`s that only docker reads, joined like Ruby's `File.join`.
 
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
-pub fn home() -> String {
-    std::env::home_dir().map_or_else(String::new, |dir| dir.to_string_lossy().into_owned())
+pub fn home() -> PathBuf {
+    std::env::home_dir().unwrap_or_default()
 }
 
-pub fn current_dir() -> String {
-    std::env::current_dir().map_or_else(|_| String::from("/"), |dir| dir.to_string_lossy().into_owned())
+pub fn current_dir() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
 }
 
 /// Like Ruby's `File.expand_path`: expands `~`, resolves `path` against `base`, the current directory
 /// by default, and removes `.`, `..` and repeated slashes without following symlinks.
-pub fn expand_path(path: &str, base: Option<&str>) -> String {
-    let absolute = if path == "~" || path.starts_with("~/") {
-        format!("{}{}", home(), &path[1..])
-    } else if path.starts_with('/') {
-        path.to_string()
-    } else {
-        let base = base.map_or_else(current_dir, |base| expand_path(base, None));
-        format!("{base}/{path}")
+pub fn expand_path(path: impl AsRef<Path>, base: Option<&Path>) -> PathBuf {
+    let path = path.as_ref();
+    let absolute = match path.strip_prefix("~") {
+        Ok(rest) => home().join(rest),
+        Err(_) => base.map_or_else(current_dir, |base| expand_path(base, None)).join(path),
     };
-
     normalize(&absolute)
 }
 
-fn normalize(path: &str) -> String {
-    let mut parts: Vec<&str> = Vec::new();
-    for part in path.split('/') {
-        match part {
-            "" | "." => {}
-            ".." => {
-                parts.pop();
+/// An absolute path without `.`, `..` or repeated slashes, like `/a/c` for `a/./b/../c/`
+pub fn normalize(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::from("/");
+    for component in path.components() {
+        match component {
+            Component::ParentDir => {
+                normalized.pop();
             }
-            _ => parts.push(part),
+            Component::Normal(part) => normalized.push(part),
+            Component::Prefix(_) | Component::RootDir | Component::CurDir => {}
         }
     }
-
-    // Ruby keeps exactly two leading slashes, POSIX leaves their meaning to the system
-    let root = if path.starts_with("//") && !path.starts_with("///") {
-        "//"
-    } else {
-        "/"
-    };
-    format!("{root}{}", parts.join("/"))
+    normalized
 }
 
 /// Like Ruby's `File.join`: joins with one slash between parts, whatever slashes they have.
@@ -64,28 +54,12 @@ pub fn join(parts: &[&str]) -> String {
     joined
 }
 
-pub fn basename(path: &str) -> &str {
-    let trimmed = path.trim_end_matches('/');
-    if trimmed.is_empty() {
-        return if path.is_empty() { "" } else { "/" };
-    }
-    trimmed.rsplit('/').next().unwrap_or(trimmed)
-}
-
 /// Like Ruby's `File.identical?`: whether both paths exist and are the same file, following symlinks.
-pub fn identical(first: &str, second: &str) -> bool {
-    match (std::fs::metadata(first), std::fs::metadata(second)) {
+pub fn identical(first: &Path, second: &Path) -> bool {
+    match (first.metadata(), second.metadata()) {
         (Ok(first), Ok(second)) => first.dev() == second.dev() && first.ino() == second.ino(),
         _ => false,
     }
-}
-
-pub fn exists(path: &str) -> bool {
-    Path::new(path).exists()
-}
-
-pub fn is_dir(path: &str) -> bool {
-    Path::new(path).is_dir()
 }
 
 /// Like Ruby's `Shellwords.join`
@@ -122,12 +96,13 @@ mod tests {
 
     #[test]
     fn expand_path_normalizes() {
-        assert_eq!(expand_path("/a/./b/../c/", None), "/a/c");
-        assert_eq!(expand_path("//a/b", None), "//a/b");
-        assert_eq!(expand_path("///a", None), "/a");
-        assert_eq!(expand_path("/..", None), "/");
-        assert_eq!(expand_path("b", Some("/a")), "/a/b");
-        assert_eq!(expand_path("/b", Some("/a")), "/b");
+        assert_eq!(expand_path("/a/./b/../c/", None), Path::new("/a/c"));
+        assert_eq!(expand_path("//a/b", None), Path::new("/a/b"));
+        assert_eq!(expand_path("/..", None), Path::new("/"));
+        assert_eq!(expand_path("b", Some(Path::new("/a"))), Path::new("/a/b"));
+        assert_eq!(expand_path("/b", Some(Path::new("/a"))), Path::new("/b"));
+        assert_eq!(expand_path("~/x/..", None), home());
+        assert_eq!(expand_path("~x", Some(Path::new("/a"))), Path::new("/a/~x"));
     }
 
     #[test]
@@ -135,13 +110,6 @@ mod tests {
         assert_eq!(join(&["/home", "ubuntu", ".claude"]), "/home/ubuntu/.claude");
         assert_eq!(join(&["/home/", "/ubuntu/", "/x"]), "/home/ubuntu/x");
         assert_eq!(join(&["/workspace", ""]), "/workspace/");
-    }
-
-    #[test]
-    fn basename_of_paths() {
-        assert_eq!(basename("/a/b"), "b");
-        assert_eq!(basename("/a/b/"), "b");
-        assert_eq!(basename("/"), "/");
     }
 
     #[test]

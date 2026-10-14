@@ -1,14 +1,15 @@
 use crate::docker::{check_docker, docker_system, image_exists};
-use crate::paths::join;
+use std::path::PathBuf;
+
 use crate::settings::{self, Settings};
-use crate::{Result, error, paths, puts};
+use crate::{Result, error, puts};
 
 pub const BASE_NAME: &str = "base";
 pub const IMAGES_DIR_SETTING: &str = "images_dir";
 
 pub struct Builder {
     tag_prefix: String,
-    images_dir: String,
+    images_dir: PathBuf,
 }
 
 impl Builder {
@@ -25,7 +26,7 @@ impl Builder {
         let mut names: Vec<String> = std::fs::read_dir(&self.images_dir)?
             .filter_map(std::result::Result::ok)
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .filter(|name| !name.starts_with('.') && paths::exists(&join(&[&self.images_dir, name, "Dockerfile"])))
+            .filter(|name| !name.starts_with('.') && self.image_dir(name).join("Dockerfile").exists())
             .collect();
         names.sort();
         Ok(names)
@@ -73,9 +74,10 @@ impl Builder {
         if self.needs_base(name)? {
             args.extend([String::from("--build-arg"), format!("TAG_PREFIX={}", self.tag_prefix)]);
         }
-        args.extend([String::from("-t"), tag.clone(), self.image_dir(name)]);
+        let image_dir = self.image_dir(name).display().to_string();
+        args.extend([String::from("-t"), tag.clone(), image_dir.clone()]);
 
-        puts(&format!("==> Building {tag} from {}", self.image_dir(name)));
+        puts(&format!("==> Building {tag} from {image_dir}"));
         if !docker_system(&args) {
             return error(format!("failed to build {tag}"));
         }
@@ -83,7 +85,7 @@ impl Builder {
     }
 
     fn needs_base(&self, name: &str) -> Result<bool> {
-        let dockerfile = std::fs::read(join(&[&self.image_dir(name), "Dockerfile"]))?;
+        let dockerfile = std::fs::read(self.image_dir(name).join("Dockerfile"))?;
         Ok(from_base(&String::from_utf8_lossy(&dockerfile)))
     }
 
@@ -95,19 +97,19 @@ impl Builder {
         format!("{}:{name}", self.tag_prefix)
     }
 
-    fn image_dir(&self, name: &str) -> String {
-        join(&[&self.images_dir, name])
+    fn image_dir(&self, name: &str) -> PathBuf {
+        self.images_dir.join(name)
     }
 
     fn check_images_dir(&self) -> Result<()> {
-        if paths::is_dir(&self.images_dir) {
+        if self.images_dir.is_dir() {
             return Ok(());
         }
 
         error(format!(
             "images directory {} does not exist, set {IMAGES_DIR_SETTING} in {}",
-            self.images_dir,
-            settings::path()
+            self.images_dir.display(),
+            settings::path().display()
         ))
     }
 }
