@@ -1,6 +1,6 @@
-use crate::docker::{check_docker, docker_system, image_exists};
 use std::path::PathBuf;
 
+use crate::docker::{check_docker, docker_system, image_exists};
 use crate::settings::{self, Settings};
 use crate::{Result, error, puts};
 

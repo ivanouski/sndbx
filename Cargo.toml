@@ -1,13 +1,13 @@
 [package]
 name = "sndbx"
-version = "0.22.0"
+version = "0.22.1"
 edition = "2024"
 description = "A small wrapper around docker run for running coding agents in a sandbox"
 license = "MIT"
 publish = false
 
 [dependencies]
-clap = { version = "4.6.7", features = ["derive"] }
+clap = { version = "4", features = ["derive"] }
 jiff = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_norway = "0.9"

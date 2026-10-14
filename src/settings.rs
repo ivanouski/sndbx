@@ -54,6 +54,7 @@ struct File {
 }
 
 #[derive(Deserialize)]
+#[serde(expecting = "a mapping with a name")]
 struct Entry {
     #[serde(deserialize_with = "text")]
     name: String,

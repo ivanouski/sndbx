@@ -32,8 +32,10 @@ module SndbxTestHelper
 
   private
 
+  # Without CLICOLOR_FORCE, which would color clap's errors
   def sndbx(*args, env: {})
-    Result.new(*Open3.capture3({ 'HOME' => @home, 'PATH' => @bin }.merge(env), *COMMAND, *args, chdir: @work))
+    env = { 'HOME' => @home, 'PATH' => @bin, 'CLICOLOR_FORCE' => nil }.merge(env)
+    Result.new(*Open3.capture3(env, *COMMAND, *args, chdir: @work))
   end
 
   def mkdir(path)

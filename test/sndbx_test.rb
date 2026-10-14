@@ -141,6 +141,13 @@ class SndbxTest < Minitest::Test
     assert_settings_error 'images[0]: missing field `name`', sndbx('run', 'claude')
   end
 
+  def test_images_must_be_mappings
+    write_settings(images: ['claude'])
+
+    assert_settings_error 'images[0]: invalid type: string "claude", expected a mapping with a name',
+                          sndbx('run', 'claude')
+  end
+
   def test_settings_must_be_a_mapping
     write_settings_file("- claude\n")
 
