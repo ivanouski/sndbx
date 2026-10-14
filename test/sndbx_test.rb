@@ -112,14 +112,14 @@ class SndbxTest < Minitest::Test
   def test_unquoted_port
     write_settings(images: [{ name: 'claude', user: 'ubuntu', ports: [3000] }])
 
-    assert_error "image 'claude' has an unquoted port in #{settings_path}; quote it, e.g. \"3000\"",
-                 sndbx('run', 'claude')
+    assert_settings_error 'images[0].ports[0]: invalid type: integer `3000`, expected a string', sndbx('run', 'claude')
   end
 
   def test_docker_args_must_be_strings
     write_settings(images: [{ name: 'claude', user: 'ubuntu', docker_args: [8] }])
 
-    assert_error "image 'claude' has docker_args that aren't strings in #{settings_path}", sndbx('run', 'claude')
+    assert_settings_error 'images[0].docker_args[0]: invalid type: integer `8`, expected a string',
+                          sndbx('run', 'claude')
   end
 
   def test_invalid_tag_prefix
@@ -132,19 +132,20 @@ class SndbxTest < Minitest::Test
   def test_images_must_be_a_list
     write_settings(images: 'claude')
 
-    assert_error "invalid #{settings_path}: images must be a list", sndbx('run', 'claude')
+    assert_settings_error 'images: invalid type: string "claude", expected a sequence', sndbx('run', 'claude')
   end
 
   def test_images_need_a_name
     write_settings(images: [{ user: 'ubuntu' }])
 
-    assert_error "invalid #{settings_path}: image 1 must be a mapping with a name", sndbx('run', 'claude')
+    assert_settings_error 'images[0]: missing field `name`', sndbx('run', 'claude')
   end
 
   def test_settings_must_be_a_mapping
     write_settings_file("- claude\n")
 
-    assert_error "invalid #{settings_path}: expected a mapping with an images list", sndbx('run', 'claude')
+    assert_error "invalid #{settings_path}: invalid type: sequence, expected a mapping with an images list",
+                 sndbx('run', 'claude')
   end
 
   def test_invalid_yaml
@@ -448,7 +449,13 @@ class SndbxTest < Minitest::Test
   def test_config_dir_must_be_a_path
     write_settings(images: [{ name: 'claude', user: 'ubuntu', config_dir: 42 }])
 
-    assert_error "image 'claude' has a config_dir that isn't a path in #{settings_path}", sndbx('run', 'claude')
+    assert_settings_error 'images[0].config_dir: invalid type: integer `42`, expected a string', sndbx('run', 'claude')
+  end
+
+  def test_other_images_must_be_valid
+    write_settings(images: [{ name: 'claude', user: 'ubuntu' }, { name: 'codex', user: 5 }])
+
+    assert_settings_error 'images[1].user: invalid type: integer `5`, expected a string', sndbx('run', 'claude')
   end
 
   def test_config_dir_must_not_be_empty
@@ -935,6 +942,13 @@ class SndbxTest < Minitest::Test
   def assert_error(message, result)
     refute_predicate result, :success?
     assert_equal "Error: #{message}.\n", result.err
+  end
+
+  # A settings error from the YAML parser, which ends with where it is in the file
+  def assert_settings_error(message, result)
+    refute_predicate result, :success?
+    prefix = "Error: invalid #{settings_path}: #{message}"
+    assert_match(/\A#{Regexp.escape(prefix)} at line \d+ column \d+\.\n\z/, result.err)
   end
 
   def assert_help(usage, result)
