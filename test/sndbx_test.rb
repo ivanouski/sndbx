@@ -63,11 +63,17 @@ class SndbxTest < Minitest::Test
   end
 
   def test_exec_help
-    assert_help 'Usage: sndbx exec IMAGE CONTAINER COMMAND [ARGS] | IMAGE --list', sndbx('exec', '-h')
+    assert_help 'Usage: sndbx exec IMAGE CONTAINER [options] COMMAND [ARGS]', sndbx('exec', '-h')
   end
 
   def test_resume_help
-    assert_help 'Usage: sndbx resume IMAGE CONTAINER | IMAGE --list', sndbx('resume', '-h')
+    assert_help 'Usage: sndbx resume IMAGE CONTAINER', sndbx('resume', '-h')
+  end
+
+  def test_list_help
+    assert_help 'Usage: sndbx list WHAT', sndbx('list', '-h')
+    assert_help 'Usage: sndbx list WHAT', sndbx('list')
+    assert_help 'Usage: sndbx list running IMAGE', sndbx('list', 'running', '-h')
   end
 
   def test_logs_help
@@ -82,11 +88,11 @@ class SndbxTest < Minitest::Test
   end
 
   def test_unknown_command
-    assert_error "unknown command 'foo', expected one of: run, build, exec, resume, logs", sndbx('foo')
+    assert_usage_error "unrecognized subcommand 'foo'", sndbx('foo')
   end
 
   def test_invalid_option
-    assert_error 'invalid option: --bogus', sndbx('--bogus')
+    assert_usage_error "unexpected argument '--bogus' found", sndbx('--bogus')
   end
 
   def test_first_run_creates_example_settings
@@ -112,15 +118,14 @@ class SndbxTest < Minitest::Test
   def test_unquoted_port
     write_settings(images: [{ name: 'claude', user: 'ubuntu', ports: [3000] }])
 
-    assert_error "image 'claude' has an unquoted port in #{settings_path}, YAML read it as 3000; " \
-                 'quote it, e.g. "3000"',
-                 sndbx('run', 'claude')
+    assert_settings_error 'images[0].ports[0]: invalid type: integer `3000`, expected a string', sndbx('run', 'claude')
   end
 
   def test_docker_args_must_be_strings
     write_settings(images: [{ name: 'claude', user: 'ubuntu', docker_args: [8] }])
 
-    assert_error "image 'claude' has docker_args that aren't strings in #{settings_path}", sndbx('run', 'claude')
+    assert_settings_error 'images[0].docker_args[0]: invalid type: integer `8`, expected a string',
+                          sndbx('run', 'claude')
   end
 
   def test_invalid_tag_prefix
@@ -133,19 +138,27 @@ class SndbxTest < Minitest::Test
   def test_images_must_be_a_list
     write_settings(images: 'claude')
 
-    assert_error "invalid #{settings_path}: images must be a list", sndbx('run', 'claude')
+    assert_settings_error 'images: invalid type: string "claude", expected a sequence', sndbx('run', 'claude')
   end
 
   def test_images_need_a_name
     write_settings(images: [{ user: 'ubuntu' }])
 
-    assert_error "invalid #{settings_path}: image 1 must be a mapping with a name", sndbx('run', 'claude')
+    assert_settings_error 'images[0]: missing field `name`', sndbx('run', 'claude')
+  end
+
+  def test_images_must_be_mappings
+    write_settings(images: ['claude'])
+
+    assert_settings_error 'images[0]: invalid type: string "claude", expected a mapping with a name',
+                          sndbx('run', 'claude')
   end
 
   def test_settings_must_be_a_mapping
     write_settings_file("- claude\n")
 
-    assert_error "invalid #{settings_path}: expected a mapping with an images list", sndbx('run', 'claude')
+    assert_error "invalid #{settings_path}: invalid type: sequence, expected a mapping with an images list",
+                 sndbx('run', 'claude')
   end
 
   def test_invalid_yaml
@@ -357,7 +370,7 @@ class SndbxTest < Minitest::Test
     missing = File.join(@root, 'missing')
 
     assert_predicate sndbx('-h', env: { 'HOME' => missing }), :success?
-    assert_predicate sndbx('run', '--list', env: { 'HOME' => missing }), :success?
+    assert_predicate sndbx('list', 'configured', env: { 'HOME' => missing }), :success?
   end
 
   def test_refuses_to_mount_root
@@ -385,6 +398,19 @@ class SndbxTest < Minitest::Test
     assert_equal ['run', '-it', '--label=sndbx.image=claude', '--workdir=/workspace/project', *volume('project'),
                   *config_volume, 'sndbx:claude'],
                  docker_calls.last
+  end
+
+  def test_run_option_spellings
+    write_claude_settings
+    mkdir('work/project/-dir')
+
+    sndbx('run', '--kee', '-kp3000', '--publish=8080:80', '--pub', '53/udp', 'claude')
+    sndbx('run', 'claude', '-v', '-dir', '-w', 'nope', '--workdir', '-dir')
+
+    assert_equal [['run', '-it', '--label=sndbx.image=claude', '--workdir=/workspace/project', *volume('project'),
+                   *config_volume, '-p', '3000:3000', '-p', '8080:80', '-p', '53:53/udp', 'sndbx:claude'],
+                  [*run_options('-dir'), *volume('-dir', File.join(@work, '-dir')), *config_volume, 'sndbx:claude']],
+                 docker_runs
   end
 
   def test_invalid_port
@@ -449,7 +475,13 @@ class SndbxTest < Minitest::Test
   def test_config_dir_must_be_a_path
     write_settings(images: [{ name: 'claude', user: 'ubuntu', config_dir: 42 }])
 
-    assert_error "image 'claude' has a config_dir that isn't a path in #{settings_path}", sndbx('run', 'claude')
+    assert_settings_error 'images[0].config_dir: invalid type: integer `42`, expected a string', sndbx('run', 'claude')
+  end
+
+  def test_other_images_must_be_valid
+    write_settings(images: [{ name: 'claude', user: 'ubuntu' }, { name: 'codex', user: 5 }])
+
+    assert_settings_error 'images[1].user: invalid type: integer `5`, expected a string', sndbx('run', 'claude')
   end
 
   def test_config_dir_must_not_be_empty
@@ -482,7 +514,7 @@ class SndbxTest < Minitest::Test
   def test_run_takes_the_image_before_docker_args
     write_claude_settings
 
-    assert_error 'expected exactly one image', sndbx('run', '--', 'claude')
+    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('run', '--', 'claude')
   end
 
   def test_run_uses_image_tag
@@ -513,33 +545,33 @@ class SndbxTest < Minitest::Test
   end
 
   def test_run_needs_one_image
-    assert_error 'expected exactly one image', sndbx('run')
-    assert_error 'expected exactly one image', sndbx('run', 'claude', 'codex')
+    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('run')
+    assert_usage_error "unexpected argument 'codex' found", sndbx('run', 'claude', 'codex')
   end
 
-  def test_run_list
+  def test_list_configured
     write_settings(images: [{ name: 'claude', user: 'ubuntu' }, { name: 'codex', user: 'ubuntu' }])
 
-    assert_equal "claude\ncodex\n", sndbx('run', '--list').out
+    assert_equal "claude\ncodex\n", sndbx('list', 'configured').out
   end
 
-  def test_run_list_without_settings_does_not_create_them
-    result = sndbx('run', '--list')
+  def test_list_configured_without_settings_does_not_create_them
+    result = sndbx('list', 'configured')
 
     assert_predicate result, :success?
     assert_empty result.out
     refute File.exist?(settings_path)
   end
 
-  def test_build_list
+  def test_list_buildable
     write_build_settings
     mkdir('images/not-an-image')
 
-    assert_equal "base\nclaude\nplain\n", sndbx('build', '--list').out
+    assert_equal "base\nclaude\nplain\n", sndbx('list', 'buildable').out
   end
 
-  def test_build_list_defaults_to_the_repo_images
-    result = sndbx('build', '--list')
+  def test_list_buildable_defaults_to_the_repo_images
+    result = sndbx('list', 'buildable')
 
     assert_equal Dir.glob('*/Dockerfile', base: REPO_IMAGES_DIR).map { |path| File.dirname(path) }.sort,
                  result.out.lines(chomp: true)
@@ -549,7 +581,7 @@ class SndbxTest < Minitest::Test
   def test_build_with_relative_images_dir
     write_build_settings(images_dir: '../../images', home: @root)
 
-    assert_equal "base\nclaude\nplain\n", sndbx('build', '--list', env: { 'HOME' => @root }).out
+    assert_equal "base\nclaude\nplain\n", sndbx('list', 'buildable', env: { 'HOME' => @root }).out
   end
 
   def test_build_builds_missing_base_first
@@ -638,9 +670,9 @@ class SndbxTest < Minitest::Test
   def test_build_needs_one_image_or_all
     write_build_settings
 
-    assert_error 'expected exactly one image, or --all', sndbx('build')
-    assert_error 'expected exactly one image, or --all', sndbx('build', 'base', 'plain')
-    assert_error 'expected exactly one image, or --all', sndbx('build', '--all', 'base')
+    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('build')
+    assert_usage_error "unexpected argument 'plain' found", sndbx('build', 'base', 'plain')
+    assert_usage_error "the argument '--all' cannot be used with '[IMAGE]'", sndbx('build', '--all', 'base')
   end
 
   def test_exec
@@ -676,7 +708,7 @@ class SndbxTest < Minitest::Test
 
     PTY.spawn({ 'HOME' => @home, 'PATH' => @bin, 'DOCKER_LOG' => @docker_log, 'DOCKER_IMAGES' => @docker_images,
                 'DOCKER_CONTAINERS' => @docker_containers },
-              RbConfig.ruby, BIN, 'exec', 'claude', 'gifted_mcnulty', 'bash', chdir: @work) do |out, _in, pid|
+              *COMMAND, 'exec', 'claude', 'gifted_mcnulty', 'bash', chdir: @work) do |out, _in, pid|
       begin
         out.read
       rescue Errno::EIO
@@ -691,8 +723,10 @@ class SndbxTest < Minitest::Test
   def test_exec_needs_a_nonempty_user
     write_exec_settings
 
-    assert_error 'expected a user', sndbx('exec', '-u', '', 'claude', 'gifted_mcnulty', 'bash')
-    assert_error 'expected a user', sndbx('exec', '--user=', 'claude', 'gifted_mcnulty', 'bash')
+    assert_usage_error "a value is required for '--user <USER>'",
+                       sndbx('exec', '-u', '', 'claude', 'gifted_mcnulty', 'bash')
+    assert_usage_error "a value is required for '--user <USER>'",
+                       sndbx('exec', '--user=', 'claude', 'gifted_mcnulty', 'bash')
     refute File.exist?(@docker_log)
   end
 
@@ -708,9 +742,10 @@ class SndbxTest < Minitest::Test
   def test_exec_needs_an_image_a_container_and_a_command
     write_exec_settings
 
-    assert_error 'expected an image, a container and a command', sndbx('exec')
-    assert_error 'expected an image, a container and a command', sndbx('exec', 'claude')
-    assert_error 'expected an image, a container and a command', sndbx('exec', 'claude', 'gifted_mcnulty')
+    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('exec')
+    assert_usage_error "the following required arguments were not provided:\n  <CONTAINER>", sndbx('exec', 'claude')
+    assert_usage_error "the following required arguments were not provided:\n  <COMMAND>...",
+                       sndbx('exec', 'claude', 'gifted_mcnulty')
   end
 
   def test_exec_unknown_image
@@ -740,24 +775,25 @@ class SndbxTest < Minitest::Test
     assert_error 'docker is not installed', sndbx('exec', 'claude', 'gifted_mcnulty', 'bash', docker: false)
   end
 
-  def test_exec_list
+  def test_list_running
     write_exec_settings
 
-    assert_equal "gifted_mcnulty\nquirky_hopper\n", sndbx('exec', 'claude', '--list').out
-    assert_equal "eager_turing\n", sndbx('exec', '-l', 'codex').out
-    assert_empty sndbx('exec', 'opencode', '--list').out
+    assert_equal "gifted_mcnulty\nquirky_hopper\n", sndbx('list', 'running', 'claude').out
+    assert_equal "eager_turing\n", sndbx('list', 'running', 'codex').out
+    assert_empty sndbx('list', 'running', 'opencode').out
   end
 
-  def test_exec_list_without_settings_does_not_create_them
+  def test_list_running_without_settings_does_not_create_them
     add_docker_container('claude', 'gifted_mcnulty')
 
-    assert_equal "gifted_mcnulty\n", sndbx('exec', 'claude', '--list').out
+    assert_equal "gifted_mcnulty\n", sndbx('list', 'running', 'claude').out
     refute File.exist?(settings_path)
   end
 
-  def test_exec_list_needs_one_image
-    assert_error 'expected exactly one image', sndbx('exec', '--list')
-    assert_error 'expected exactly one image', sndbx('exec', 'claude', 'gifted_mcnulty', '--list')
+  def test_list_running_needs_one_image
+    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('list', 'running')
+    assert_usage_error "unexpected argument 'gifted_mcnulty' found",
+                       sndbx('list', 'running', 'claude', 'gifted_mcnulty')
   end
 
   def test_resume
@@ -795,9 +831,9 @@ class SndbxTest < Minitest::Test
   def test_resume_needs_an_image_and_a_container
     write_resume_settings
 
-    assert_error 'expected an image and a container', sndbx('resume')
-    assert_error 'expected an image and a container', sndbx('resume', 'claude')
-    assert_error 'expected an image and a container', sndbx('resume', 'claude', 'sleepy_babbage', 'bash')
+    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('resume')
+    assert_usage_error "the following required arguments were not provided:\n  <CONTAINER>", sndbx('resume', 'claude')
+    assert_usage_error "unexpected argument 'bash' found", sndbx('resume', 'claude', 'sleepy_babbage', 'bash')
   end
 
   def test_resume_without_docker
@@ -806,16 +842,26 @@ class SndbxTest < Minitest::Test
     assert_error 'docker is not installed', sndbx('resume', 'claude', 'sleepy_babbage', docker: false)
   end
 
-  def test_resume_list
+  def test_list_stopped
     write_resume_settings
 
-    assert_equal "sleepy_babbage\n", sndbx('resume', 'claude', '--list').out
-    assert_empty sndbx('resume', '-l', 'codex').out
+    assert_equal "sleepy_babbage\n", sndbx('list', 'stopped', 'claude').out
+    assert_empty sndbx('list', 'stopped', 'codex').out
   end
 
-  def test_resume_list_needs_one_image
-    assert_error 'expected exactly one image', sndbx('resume', '--list')
-    assert_error 'expected exactly one image', sndbx('resume', 'claude', 'sleepy_babbage', '--list')
+  def test_list_stopped_needs_one_image
+    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('list', 'stopped')
+  end
+
+  def test_list_needs_a_known_list
+    assert_usage_error "unrecognized subcommand 'images'", sndbx('list', 'images')
+  end
+
+  def test_old_list_options_are_gone
+    assert_usage_error "unexpected argument '--list' found", sndbx('run', '--list')
+    assert_usage_error "unexpected argument '--list' found", sndbx('build', '--list')
+    assert_usage_error "unexpected argument '--list' found", sndbx('exec', 'claude', '--list')
+    assert_usage_error "unexpected argument '--list' found", sndbx('resume', 'claude', '--list')
   end
 
   def test_logs_docker_commands
@@ -846,9 +892,10 @@ class SndbxTest < Minitest::Test
   def test_does_not_log_lists
     write_resume_settings
 
-    sndbx('run', '--list')
-    sndbx('exec', 'claude', '--list')
-    sndbx('resume', 'claude', '--list')
+    sndbx('list', 'configured')
+    sndbx('list', 'buildable')
+    sndbx('list', 'running', 'claude')
+    sndbx('list', 'stopped', 'claude')
 
     refute File.exist?(log_path)
   end
@@ -898,12 +945,13 @@ class SndbxTest < Minitest::Test
   end
 
   def test_logs_needs_a_line_count
-    assert_error 'invalid argument: -n x', sndbx('logs', '-n', 'x')
-    assert_error 'expected a line count of 0 or more', sndbx('logs', '-n', '-1')
+    assert_usage_error "invalid value 'x' for '--lines <N>': expected a number", sndbx('logs', '-n', 'x')
+    assert_usage_error "invalid value '-1' for '--lines <N>': expected a line count of 0 or more",
+                       sndbx('logs', '-n', '-1')
   end
 
   def test_logs_takes_no_arguments
-    assert_error 'expected no arguments', sndbx('logs', 'claude')
+    assert_usage_error "unexpected argument 'claude' found", sndbx('logs', 'claude')
   end
 
   private
@@ -936,6 +984,19 @@ class SndbxTest < Minitest::Test
   def assert_error(message, result)
     refute_predicate result, :success?
     assert_equal "Error: #{message}.\n", result.err
+  end
+
+  # A settings error from the YAML parser, which ends with where it is in the file
+  def assert_settings_error(message, result)
+    refute_predicate result, :success?
+    prefix = "Error: invalid #{settings_path}: #{message}"
+    assert_match(/\A#{Regexp.escape(prefix)} at line \d+ column \d+\.\n\z/, result.err)
+  end
+
+  # An error clap found in the arguments, before sndbx does anything
+  def assert_usage_error(message, result)
+    assert_equal 2, result.status.exitstatus
+    assert result.err.start_with?("error: #{message}"), result.err
   end
 
   def assert_help(usage, result)
@@ -979,6 +1040,10 @@ class SndbxTest < Minitest::Test
 
   def docker_calls
     File.readlines(@docker_log).map { |line| JSON.parse(line) }
+  end
+
+  def docker_runs
+    docker_calls.select { |call| call.first == 'run' }
   end
 
   def docker_execs

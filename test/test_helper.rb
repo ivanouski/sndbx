@@ -9,7 +9,8 @@ require 'tmpdir'
 require 'yaml'
 
 module SndbxTestHelper
-  BIN = File.expand_path('../bin/sndbx', __dir__)
+  # The binary to test, the debug build unless SNDBX_BIN names another, e.g. a release build
+  COMMAND = [File.expand_path(ENV.fetch('SNDBX_BIN', '../target/debug/sndbx'), __dir__)].freeze
 
   Result = Struct.new(:out, :err, :status) do
     def success?
@@ -31,8 +32,10 @@ module SndbxTestHelper
 
   private
 
+  # Without CLICOLOR_FORCE, which would color clap's errors
   def sndbx(*args, env: {})
-    Result.new(*Open3.capture3({ 'HOME' => @home, 'PATH' => @bin }.merge(env), RbConfig.ruby, BIN, *args, chdir: @work))
+    env = { 'HOME' => @home, 'PATH' => @bin, 'CLICOLOR_FORCE' => nil }.merge(env)
+    Result.new(*Open3.capture3(env, *COMMAND, *args, chdir: @work))
   end
 
   def mkdir(path)
