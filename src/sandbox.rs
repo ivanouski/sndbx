@@ -39,6 +39,10 @@ impl Sandbox {
         docker_args.extend(options.docker_args);
 
         let volumes = volumes(&options.volumes)?;
+        let workdir = match options.workdir {
+            Some(name) => Some(workdir_target(&name)),
+            None => default_workdir(&volumes),
+        };
 
         let mut ports: Vec<String> = Vec::new();
         for port in image.ports.iter().chain(&options.ports) {
@@ -48,19 +52,14 @@ impl Sandbox {
             }
         }
 
-        let mut sandbox = Self {
+        Ok(Self {
             image,
             keep: options.keep,
             docker_args,
             volumes,
             ports,
-            workdir: None,
-        };
-        sandbox.workdir = match options.workdir {
-            Some(name) => Some(workdir_target(&name)),
-            None => sandbox.default_workdir(),
-        };
-        Ok(sandbox)
+            workdir,
+        })
     }
 
     pub fn run(&self) -> Result<()> {
@@ -70,14 +69,14 @@ impl Sandbox {
         std::fs::create_dir_all(&self.image.config_dir)?;
 
         let label = format!("--label={IMAGE_LABEL}={}", self.image.name);
-        let workdir = format!("--workdir={workdir}");
+        let workdir_arg = format!("--workdir={workdir}");
         let volumes = self.volume_specs();
 
         let mut args = vec!["run"];
         if !self.keep {
             args.push("--rm");
         }
-        args.extend(["-it", &label, &workdir]);
+        args.extend(["-it", &label, &workdir_arg]);
         for volume in &volumes {
             args.extend(["-v", volume]);
         }
@@ -108,24 +107,6 @@ impl Sandbox {
         specs
     }
 
-    fn directory_targets(&self) -> Vec<&str> {
-        self.volumes
-            .iter()
-            .filter(|volume| volume.source.is_dir())
-            .map(|volume| volume.target.as_str())
-            .collect()
-    }
-
-    fn default_workdir(&self) -> Option<String> {
-        let targets = self.directory_targets();
-        targets
-            .iter()
-            .rev()
-            .find(|target| is_in_workspace(target))
-            .or(targets.last())
-            .map(ToString::to_string)
-    }
-
     fn check_image(&self) -> Result<()> {
         if image_exists(&self.image.tag) {
             return Ok(());
@@ -134,7 +115,7 @@ impl Sandbox {
     }
 
     fn check_workdir(&self) -> Result<&str> {
-        let targets = self.directory_targets();
+        let targets = directory_targets(&self.volumes);
         if targets.is_empty() {
             bail!("no directory volume to start in");
         }
@@ -151,6 +132,26 @@ impl Sandbox {
             names.join(", ")
         )
     }
+}
+
+/// Where the directory volumes are mounted, the places a sandbox can start in
+fn directory_targets(volumes: &[Volume]) -> Vec<&str> {
+    volumes
+        .iter()
+        .filter(|volume| volume.source.is_dir())
+        .map(|volume| volume.target.as_str())
+        .collect()
+}
+
+/// The last directory volume in the workspace, or the last one anywhere
+fn default_workdir(volumes: &[Volume]) -> Option<String> {
+    let targets = directory_targets(volumes);
+    targets
+        .iter()
+        .rev()
+        .find(|target| is_in_workspace(target))
+        .or(targets.last())
+        .map(ToString::to_string)
 }
 
 fn volumes(specs: &[String]) -> Result<Vec<Volume>> {

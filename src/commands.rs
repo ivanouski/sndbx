@@ -366,8 +366,8 @@ fn print_lines(lines: &[String]) {
 /// with an optional sign and single underscores between digits
 fn line_count(value: &str) -> Result<u64, String> {
     match parse_integer(value) {
-        None => Err(String::from("expected a number")),
-        Some(count) => u64::try_from(count).map_err(|_| String::from("expected a line count of 0 or more")),
+        None => Err("expected a number".to_string()),
+        Some(count) => u64::try_from(count).map_err(|_| "expected a line count of 0 or more".to_string()),
     }
 }
 

@@ -75,7 +75,7 @@ pub fn shell_join(words: &[&str]) -> String {
 /// and a newline in single quotes
 fn shell_escape(word: &str) -> String {
     if word.is_empty() {
-        return String::from("''");
+        return "''".to_string();
     }
 
     let mut escaped = String::with_capacity(word.len());
