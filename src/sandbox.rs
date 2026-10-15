@@ -1,6 +1,7 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 
 use crate::docker::{self, IMAGE_LABEL, check_docker, image_exists};
 use crate::paths::{expand_path, is_same_file, join, normalize};
@@ -8,7 +9,6 @@ use crate::settings::Image;
 use crate::{Result, paths};
 
 pub const MOUNT_ROOT: &str = "/workspace";
-const MAX_PORT: u64 = 65_535;
 
 pub struct Options {
     pub volumes: Vec<String>,
@@ -162,15 +162,9 @@ fn volumes(specs: &[String]) -> Result<Vec<Volume>> {
         volumes.insert(0, parse_volume(&paths::current_dir().to_string_lossy())?);
     }
 
-    let mut targets: Vec<(&str, usize)> = Vec::new();
-    for volume in &volumes {
-        match targets.iter_mut().find(|(target, _)| *target == volume.target) {
-            Some((_, count)) => *count += 1,
-            None => targets.push((&volume.target, 1)),
-        }
-    }
-    if let Some((target, _)) = targets.iter().find(|(_, count)| *count > 1) {
-        bail!("more than one volume is mounted at {target}");
+    let mut targets = HashSet::new();
+    if let Some(volume) = volumes.iter().find(|volume| !targets.insert(&volume.target)) {
+        bail!("more than one volume is mounted at {}", volume.target);
     }
 
     Ok(volumes)
@@ -232,50 +226,44 @@ fn is_in_workspace(target: &str) -> bool {
 }
 
 /// Docker's `-p` syntax, `[HOST_IP:]HOST:CONTAINER[/PROTOCOL]`, where `PORT` means `PORT:PORT`
-fn normalize_port(port: &str) -> Result<String> {
-    let (numbers, protocol) = match port.split_once('/') {
+fn normalize_port(spec: &str) -> Result<String> {
+    let invalid = || anyhow!("invalid port '{spec}', expected PORT or HOST:CONTAINER");
+
+    let (numbers, protocol) = match spec.split_once('/') {
+        None => (spec, None),
         Some((numbers, protocol @ ("tcp" | "udp"))) => (numbers, Some(protocol)),
-        Some(_) => (port, Some("")),
-        None => (port, None),
+        Some(_) => return Err(invalid()),
     };
-    let parts: Vec<&str> = numbers.split(':').collect();
 
-    // The numbers are digits; a host IP in front is digits and dots
-    let digits = |part: &&str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
-    let address = |part: &&str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit() || b == b'.');
-    let valid = protocol != Some("")
-        && match parts.as_slice() {
-            [port] => digits(port),
-            [host, container] => address(host) && digits(container),
-            [address_part, host, container] => address(address_part) && digits(host) && digits(container),
-            _ => false,
-        };
-    if !valid {
-        bail!("invalid port '{port}', expected PORT or HOST:CONTAINER");
+    // Two fields are HOST:CONTAINER, or HOST_IP:CONTAINER when the first has dots
+    let fields: Vec<&str> = numbers.split(':').collect();
+    let (host_ip, ports) = match fields.as_slice() {
+        [ip, _] if ip.contains('.') => (Some(*ip), &fields[1..]),
+        [_] | [_, _] => (None, &fields[..]),
+        [ip, _, _] => (Some(*ip), &fields[1..]),
+        _ => return Err(invalid()),
+    };
+    if host_ip.is_some_and(|ip| !is_ip_address(ip)) || !ports.iter().all(|port| is_digits(port)) {
+        return Err(invalid());
     }
-    if port_numbers(&parts).iter().any(|&number| number > MAX_PORT) {
-        bail!("invalid port '{port}', ports go up to {MAX_PORT}");
+    if ports.iter().any(|port| port.parse::<u16>().is_err()) {
+        bail!("invalid port '{spec}', ports go up to {}", u16::MAX);
     }
 
-    Ok(match (parts.as_slice(), protocol) {
-        ([bare], Some(protocol)) => format!("{bare}:{bare}/{protocol}"),
-        ([bare], None) => format!("{bare}:{bare}"),
-        _ => port.to_string(),
+    Ok(match (fields.as_slice(), protocol) {
+        ([port], Some(protocol)) => format!("{port}:{port}/{protocol}"),
+        ([port], None) => format!("{port}:{port}"),
+        _ => spec.to_string(),
     })
 }
 
-/// The host and container ports, or the leading number of a host IP in front of one port
-fn port_numbers(parts: &[&str]) -> Vec<u64> {
-    parts[parts.len().saturating_sub(2)..]
-        .iter()
-        .map(|part| {
-            part.bytes()
-                .take_while(u8::is_ascii_digit)
-                .fold(0_u64, |number, digit| {
-                    number.saturating_mul(10).saturating_add(u64::from(digit - b'0'))
-                })
-        })
-        .collect()
+fn is_digits(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Digits and dots, docker checks the rest
+fn is_ip_address(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit() || b == b'.')
 }
 
 fn mount_target(name: &str) -> String {
@@ -300,6 +288,7 @@ mod tests {
         assert!(normalize_port("http").is_err());
         assert!(normalize_port("8080:70000").is_err());
         assert!(normalize_port("99999999999999999999999:80").is_err());
+        assert!(normalize_port("127.0.0.1:3080:70000").is_err());
         assert_eq!(normalize_port("1.2.3.4:80").unwrap(), "1.2.3.4:80");
         for invalid in [
             "",
@@ -312,6 +301,8 @@ mod tests {
             "80:1.2",
             "1.2:3.4:5",
             "80/tcp/udp",
+            "+80",
+            "1.2.3.4:+80",
         ] {
             assert!(normalize_port(invalid).is_err(), "{invalid}");
         }

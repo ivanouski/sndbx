@@ -118,14 +118,9 @@ impl Builder {
 fn is_from_base(dockerfile: &str) -> bool {
     let image = format!("${{TAG_PREFIX}}:{BASE_NAME}");
     dockerfile.lines().any(|line| {
-        let Some(rest) = line.strip_prefix("FROM") else {
-            return false;
-        };
-        let reference = rest.trim_start_matches(|c: char| c.is_ascii_whitespace());
-        reference.len() < rest.len()
-            && reference
-                .strip_prefix(&image)
-                .is_some_and(|after| after.is_empty() || after.starts_with(|c: char| c.is_ascii_whitespace()))
+        let mut words = line.split_ascii_whitespace();
+        // Not indented, and FROM is a word of its own
+        line.starts_with("FROM") && words.next() == Some("FROM") && words.next() == Some(image.as_str())
     })
 }
 
@@ -138,6 +133,7 @@ mod tests {
         assert!(is_from_base("ARG TAG_PREFIX=sndbx\nFROM ${TAG_PREFIX}:base\n"));
         assert!(is_from_base("FROM\t${TAG_PREFIX}:base AS build\r\n"));
         assert!(is_from_base("FROM ${TAG_PREFIX}:base"));
+        assert!(is_from_base("FROM  ${TAG_PREFIX}:base  "));
         assert!(!is_from_base("FROM ubuntu\n"));
         assert!(!is_from_base("FROM ${TAG_PREFIX}:base2\n"));
         assert!(!is_from_base("FROM${TAG_PREFIX}:base\n"));
