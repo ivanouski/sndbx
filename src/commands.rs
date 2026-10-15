@@ -1,14 +1,15 @@
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 
+use anyhow::{Context, bail};
 use clap::builder::NonEmptyStringValueParser;
 use clap::{Args, CommandFactory, Parser, Subcommand};
 
 use crate::builder::{BASE_NAME, Builder, IMAGES_DIR_SETTING};
-use crate::docker::{self, check_container, check_docker, docker_exec, running_containers, stopped_containers};
+use crate::docker::{self, check_container, check_docker, running_containers, stopped_containers};
 use crate::sandbox::{MOUNT_ROOT, Options, Sandbox};
 use crate::settings::{self, Settings};
-use crate::{Result, error, puts};
+use crate::{Result, print_line};
 
 /// The usage first, like sndbx's help always had it
 const HELP_TEMPLATE: &str = "{usage-heading} {usage}\n\n{all-args}{after-help}";
@@ -248,15 +249,15 @@ pub fn cli() -> Result<()> {
     match command {
         Commands::Run(args) => run(args),
         Commands::Build(args) => build(&args),
-        Commands::Exec(args) => exec(args),
-        Commands::Resume(args) => resume(args),
+        Commands::Exec(args) => exec(&args),
+        Commands::Resume(args) => resume(&args),
         Commands::List(args) => list(args),
         Commands::Logs(args) => logs(&args),
     }
 }
 
 fn run(args: Run) -> Result<()> {
-    let image = Settings::default().image(&args.image)?;
+    let image = Settings::load()?.image(&args.image)?;
     let options = Options {
         volumes: args.volumes,
         ports: args.ports,
@@ -264,20 +265,24 @@ fn run(args: Run) -> Result<()> {
         keep: args.keep,
         docker_args: args.docker_args,
     };
-    Sandbox::new(image, options)?.call()
+    Sandbox::new(image, options)?.run()
 }
 
 fn build(args: &Build) -> Result<()> {
-    Builder::new(&mut Settings::default())?.call(args.image.as_deref())
+    let builder = Builder::new(&Settings::load_or_default()?);
+    match &args.image {
+        Some(image) => builder.build(image),
+        None => builder.build_all(),
+    }
 }
 
-fn exec(args: Exec) -> Result<()> {
+fn exec(args: &Exec) -> Result<()> {
     let image = &args.image;
-    let container = args.container;
-    Settings::default().image(image)?;
+    let container = &args.container;
+    Settings::load()?.image(image)?;
     check_docker()?;
     check_container(
-        &container,
+        container,
         &running_containers(image)?,
         &format!("running {image} sandbox"),
     )?;
@@ -288,24 +293,26 @@ fn exec(args: Exec) -> Result<()> {
     } else {
         "-i"
     };
-    let mut docker_args = vec![String::from("exec"), String::from(tty)];
-    docker_args.extend(args.user.map(|user| format!("--user={user}")));
+    let user = args.user.as_ref().map(|user| format!("--user={user}"));
+
+    let mut docker_args = vec!["exec", tty];
+    docker_args.extend(user.as_deref());
     docker_args.push(container);
-    docker_args.extend(args.command);
-    docker_exec(&docker_args)
+    docker_args.extend(args.command.iter().map(String::as_str));
+    docker::exec(&docker_args)
 }
 
-fn resume(args: Resume) -> Result<()> {
+fn resume(args: &Resume) -> Result<()> {
     let image = &args.image;
-    let container = args.container;
-    Settings::default().image(image)?;
+    let container = &args.container;
+    Settings::load()?.image(image)?;
     check_docker()?;
     check_container(
-        &container,
+        container,
         &stopped_containers(image)?,
         &format!("stopped {image} sandbox"),
     )?;
-    docker_exec(&[String::from("start"), String::from("-ai"), container])
+    docker::exec(&["start", "-ai", container])
 }
 
 fn list(args: List) -> Result<()> {
@@ -317,10 +324,8 @@ fn list(args: List) -> Result<()> {
             }
             return Ok(());
         }
-        // Reading missing settings would create the example ones
-        Some(ListWhat::Configured) if !settings::path().exists() => Vec::new(),
-        Some(ListWhat::Configured) => Settings::default().image_names()?,
-        Some(ListWhat::Buildable) => Builder::new(&mut Settings::default())?.image_names()?,
+        Some(ListWhat::Configured) => Settings::load_or_default()?.image_names(),
+        Some(ListWhat::Buildable) => Builder::new(&Settings::load_or_default()?).image_names()?,
         Some(ListWhat::Running(args)) => {
             check_docker()?;
             running_containers(&args.image)?
@@ -339,7 +344,7 @@ fn logs(args: &Logs) -> Result<()> {
 
     let log_path = docker::log_path();
     if !log_path.exists() {
-        return error(format!("no log yet at {}", log_path.display()));
+        bail!("no log yet at {}", log_path.display());
     }
 
     let e = Command::new(TAIL)
@@ -347,20 +352,20 @@ fn logs(args: &Logs) -> Result<()> {
         .arg(&log_path)
         .exec();
     if e.kind() == std::io::ErrorKind::NotFound {
-        return error(format!("{TAIL} is not installed"));
+        bail!("{TAIL} is not installed");
     }
-    error(format!("can't run {TAIL}: {e}"))
+    Err(e).context(format!("can't run {TAIL}"))
 }
 
 fn print_lines(lines: &[String]) {
     for line in lines {
-        puts(line);
+        print_line(line);
     }
 }
 
-/// A line count of 0 or more, written like Ruby's `Integer`: decimal, `0b` binary, `0` octal
-/// or `0x` hexadecimal, with an optional sign and single underscores between digits.
-fn line_count(value: &str) -> std::result::Result<u64, String> {
+/// A line count of 0 or more, written as decimal, `0b` binary, `0` octal or `0x` hexadecimal,
+/// with an optional sign and single underscores between digits
+fn line_count(value: &str) -> Result<u64, String> {
     match parse_integer(value) {
         None => Err(String::from("expected a number")),
         Some(count) => u64::try_from(count).map_err(|_| String::from("expected a line count of 0 or more")),

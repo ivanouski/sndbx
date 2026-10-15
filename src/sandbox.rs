@@ -1,9 +1,11 @@
-use crate::docker::{IMAGE_LABEL, check_docker, docker_exec, image_exists};
 use std::path::{Path, PathBuf};
 
-use crate::paths::{expand_path, identical, join, normalize};
+use anyhow::bail;
+
+use crate::docker::{self, IMAGE_LABEL, check_docker, image_exists};
+use crate::paths::{expand_path, is_same_file, join, normalize};
 use crate::settings::Image;
-use crate::{Result, error, paths};
+use crate::{Result, paths};
 
 pub const MOUNT_ROOT: &str = "/workspace";
 const MAX_PORT: u64 = 65_535;
@@ -61,44 +63,49 @@ impl Sandbox {
         Ok(sandbox)
     }
 
-    pub fn call(&self) -> Result<()> {
+    pub fn run(&self) -> Result<()> {
         check_docker()?;
         self.check_image()?;
         let workdir = self.check_workdir()?;
         std::fs::create_dir_all(&self.image.config_dir)?;
 
-        let mut args = vec![String::from("run")];
-        if !self.keep {
-            args.push(String::from("--rm"));
-        }
-        args.extend([
-            String::from("-it"),
-            format!("--label={IMAGE_LABEL}={}", self.image.name),
-            format!("--workdir={workdir}"),
-        ]);
-        args.extend(self.volume_args());
-        args.extend(self.ports.iter().flat_map(|port| [String::from("-p"), port.clone()]));
-        args.extend(self.docker_args.iter().cloned());
-        args.push(self.image.tag.clone());
+        let label = format!("--label={IMAGE_LABEL}={}", self.image.name);
+        let workdir = format!("--workdir={workdir}");
+        let volumes = self.volume_specs();
 
-        docker_exec(&args)
+        let mut args = vec!["run"];
+        if !self.keep {
+            args.push("--rm");
+        }
+        args.extend(["-it", &label, &workdir]);
+        for volume in &volumes {
+            args.extend(["-v", volume]);
+        }
+        for port in &self.ports {
+            args.extend(["-p", port]);
+        }
+        args.extend(self.docker_args.iter().map(String::as_str));
+        args.push(&self.image.tag);
+
+        docker::exec(&args)
     }
 
-    fn volume_args(&self) -> Vec<String> {
-        self.volumes
+    /// Each volume as docker's `SRC:DST[:OPTS]`, the image's config directory last
+    fn volume_specs(&self) -> Vec<String> {
+        let mut specs: Vec<String> = self
+            .volumes
             .iter()
-            .map(|volume| {
-                let mut parts = vec![volume.source.display().to_string(), volume.target.clone()];
-                parts.extend(volume.options.clone());
-                parts.join(":")
+            .map(|volume| match &volume.options {
+                Some(options) => format!("{}:{}:{options}", volume.source.display(), volume.target),
+                None => format!("{}:{}", volume.source.display(), volume.target),
             })
-            .chain([format!(
-                "{}:{}",
-                self.image.config_dir.display(),
-                self.image.config_target
-            )])
-            .flat_map(|volume| [String::from("-v"), volume])
-            .collect()
+            .collect();
+        specs.push(format!(
+            "{}:{}",
+            self.image.config_dir.display(),
+            self.image.config_target
+        ));
+        specs
     }
 
     fn directory_targets(&self) -> Vec<&str> {
@@ -114,7 +121,7 @@ impl Sandbox {
         targets
             .iter()
             .rev()
-            .find(|target| workspace(target))
+            .find(|target| is_in_workspace(target))
             .or(targets.last())
             .map(ToString::to_string)
     }
@@ -123,13 +130,13 @@ impl Sandbox {
         if image_exists(&self.image.tag) {
             return Ok(());
         }
-        error(format!("docker image '{}' does not exist", self.image.tag))
+        bail!("docker image '{}' does not exist", self.image.tag)
     }
 
     fn check_workdir(&self) -> Result<&str> {
         let targets = self.directory_targets();
         if targets.is_empty() {
-            return error("no directory volume to start in");
+            bail!("no directory volume to start in");
         }
 
         let workdir = self.workdir.as_deref().unwrap_or_default();
@@ -138,11 +145,11 @@ impl Sandbox {
         }
 
         let names: Vec<&str> = targets.iter().map(|target| workdir_name(target)).collect();
-        error(format!(
+        bail!(
             "workdir '{}' is not a directory volume, expected one of: {}",
             workdir_name(workdir),
             names.join(", ")
-        ))
+        )
     }
 }
 
@@ -151,7 +158,7 @@ fn volumes(specs: &[String]) -> Result<Vec<Volume>> {
         .iter()
         .map(|spec| parse_volume(spec))
         .collect::<Result<Vec<_>>>()?;
-    if !volumes.iter().any(|volume| workspace(&volume.target)) {
+    if !volumes.iter().any(|volume| is_in_workspace(&volume.target)) {
         volumes.insert(0, parse_volume(&paths::current_dir().to_string_lossy())?);
     }
 
@@ -163,7 +170,7 @@ fn volumes(specs: &[String]) -> Result<Vec<Volume>> {
         }
     }
     if let Some((target, _)) = targets.iter().find(|(_, count)| *count > 1) {
-        return error(format!("more than one volume is mounted at {target}"));
+        bail!("more than one volume is mounted at {target}");
     }
 
     Ok(volumes)
@@ -174,28 +181,28 @@ fn volumes(specs: &[String]) -> Result<Vec<Volume>> {
 fn parse_volume(spec: &str) -> Result<Volume> {
     let parts: Vec<&str> = spec.split(':').collect();
     if parts.len() > 3 || parts.iter().any(|part| part.is_empty()) {
-        return error(format!("invalid volume '{spec}', expected SRC[:DST[:OPTS]]"));
+        bail!("invalid volume '{spec}', expected SRC[:DST[:OPTS]]");
     }
 
     let source = expand_path(parts[0], None);
     if !source.exists() {
-        return error(format!("{} does not exist", source.display()));
+        bail!("{} does not exist", source.display());
     }
     if [&paths::home(), Path::new("/")]
         .iter()
-        .any(|dir| identical(dir, &source))
+        .any(|dir| is_same_file(dir, &source))
     {
-        return error(format!("refusing to mount {}", source.display()));
+        bail!("refusing to mount {}", source.display());
     }
 
     let target = if let Some(target) = parts.get(1) {
         if !target.starts_with('/') {
-            return error(format!("invalid volume '{spec}', DST must be an absolute path"));
+            bail!("invalid volume '{spec}', DST must be an absolute path");
         }
         container_path(target)
     } else {
         if !source.is_dir() {
-            return error(format!("{} is not a directory", source.display()));
+            bail!("{} is not a directory", source.display());
         }
         // Not the root, it's refused above
         mount_target(&source.file_name().unwrap_or_default().to_string_lossy())
@@ -220,7 +227,7 @@ fn workdir_name(target: &str) -> &str {
     target.strip_prefix(&format!("{MOUNT_ROOT}/")).unwrap_or(target)
 }
 
-fn workspace(target: &str) -> bool {
+fn is_in_workspace(target: &str) -> bool {
     target == MOUNT_ROOT || target.starts_with(&format!("{MOUNT_ROOT}/"))
 }
 
@@ -244,10 +251,10 @@ fn normalize_port(port: &str) -> Result<String> {
             _ => false,
         };
     if !valid {
-        return error(format!("invalid port '{port}', expected PORT or HOST:CONTAINER"));
+        bail!("invalid port '{port}', expected PORT or HOST:CONTAINER");
     }
     if port_numbers(&parts).iter().any(|&number| number > MAX_PORT) {
-        return error(format!("invalid port '{port}', ports go up to {MAX_PORT}"));
+        bail!("invalid port '{port}', ports go up to {MAX_PORT}");
     }
 
     Ok(match (parts.as_slice(), protocol) {

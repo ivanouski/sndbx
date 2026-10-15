@@ -1,11 +1,12 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use anyhow::{Context, bail};
 use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
 use crate::paths::{expand_path, join};
-use crate::{Error, Result, error, paths};
+use crate::{Abort, Result, paths};
 
 pub const HOME_ROOT: &str = "/home";
 const DEFAULT_TAG_PREFIX: &str = "sndbx";
@@ -72,36 +73,62 @@ struct Entry {
     docker_args: Vec<String>,
 }
 
+/// The settings file, or the defaults where it has none
 #[derive(Default)]
 pub struct Settings {
-    settings: Option<File>,
+    file: File,
 }
 
 impl Settings {
-    pub fn image(&mut self, name: &str) -> Result<Image> {
+    /// Reads the settings, or creates an example and stops when there's no settings file
+    pub fn load() -> Result<Self> {
         let path = path();
-        let path = path.display();
-        let tag_prefix = self.tag_prefix()?;
-        let Some(entry) = self.images()?.iter().find(|entry| entry.name == name) else {
-            return error(format!(
+        if !path.exists() {
+            create_example(&path)?;
+            return Err(Abort(format!(
+                "Created an example config at {}, edit it and run again.",
+                path.display()
+            ))
+            .into());
+        }
+        read(&path)
+    }
+
+    /// Reads the settings, the defaults when there's no settings file
+    pub fn load_or_default() -> Result<Self> {
+        let path = path();
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        read(&path)
+    }
+
+    pub fn image(&self, name: &str) -> Result<Image> {
+        let Some(entry) = self.images().iter().find(|entry| entry.name == name) else {
+            bail!(
                 "unknown image '{name}', expected one of: {}",
-                self.image_names()?.join(", ")
-            ));
+                self.image_names().join(", ")
+            );
         };
 
+        let settings_path = path();
+        let settings_path = settings_path.display();
         let Some(user) = &entry.user else {
-            return error(format!("image '{name}' has no user in {path}"));
+            bail!("image '{name}' has no user in {settings_path}");
         };
         let config_dir = match entry.config_dir.as_deref() {
             None => name,
-            Some("") => return error(format!("image '{name}' has a config_dir that isn't a path in {path}")),
+            Some("") => bail!("image '{name}' has a config_dir that isn't a path in {settings_path}"),
             Some(dir) => dir,
         };
         let config_target = entry.config_target.clone().unwrap_or_else(|| format!(".{name}"));
 
         Ok(Image {
             name: name.to_string(),
-            tag: entry.tag.clone().unwrap_or_else(|| format!("{tag_prefix}:{name}")),
+            tag: entry
+                .tag
+                .clone()
+                .unwrap_or_else(|| format!("{}:{name}", self.tag_prefix())),
             config_dir: expand_path(config_dir, Some(&dir())),
             config_target: join(&[HOME_ROOT, user, &config_target]),
             ports: entry.ports.clone(),
@@ -109,75 +136,48 @@ impl Settings {
         })
     }
 
-    pub fn image_names(&mut self) -> Result<Vec<String>> {
-        Ok(self.images()?.iter().map(|entry| entry.name.clone()).collect())
+    pub fn image_names(&self) -> Vec<String> {
+        self.images().iter().map(|entry| entry.name.clone()).collect()
     }
 
-    /// Doesn't create the settings file
-    pub fn tag_prefix(&mut self) -> Result<String> {
-        Ok(self
-            .existing()?
-            .and_then(|settings| settings.tag_prefix.clone())
-            .unwrap_or_else(|| DEFAULT_TAG_PREFIX.to_string()))
+    pub fn tag_prefix(&self) -> &str {
+        self.file.tag_prefix.as_deref().unwrap_or(DEFAULT_TAG_PREFIX)
     }
 
-    /// The default finds the repo's images as long as it's where the binary was built.
-    /// Doesn't create the settings file
-    pub fn images_dir(&mut self) -> Result<PathBuf> {
-        let images_dir = self.existing()?.and_then(|settings| settings.images_dir.as_deref());
-        Ok(match images_dir {
-            Some(dir) => expand_path(dir, Some(&self::dir())),
+    /// The default finds the repo's images as long as it's where the binary was built
+    pub fn images_dir(&self) -> PathBuf {
+        match self.file.images_dir.as_deref() {
+            Some(images_dir) => expand_path(images_dir, Some(&dir())),
             None => expand_path(REPO_IMAGES_DIR, None),
-        })
-    }
-
-    fn images(&mut self) -> Result<&[Entry]> {
-        Ok(self.settings()?.images.as_deref().unwrap_or_default())
-    }
-
-    /// The settings without creating the file, `None` when there's none
-    fn existing(&mut self) -> Result<Option<&File>> {
-        if !path().exists() {
-            return Ok(None);
         }
-        self.settings().map(Some)
     }
 
-    fn settings(&mut self) -> Result<&File> {
-        if self.settings.is_none() {
-            self.settings = Some(load()?);
-        }
-        Ok(self.settings.as_ref().expect("settings were just loaded"))
+    fn images(&self) -> &[Entry] {
+        self.file.images.as_deref().unwrap_or_default()
     }
 }
 
-/// Reads and validates the settings, creating an example when there's none
-fn load() -> Result<File> {
-    let path = path();
-    if !path.exists() {
-        create_example(&path)?;
-    }
+/// Reads and validates the settings file
+fn read(path: &Path) -> Result<Settings> {
+    let content = std::fs::read_to_string(path).with_context(|| format!("can't read {}", path.display()))?;
+    let file = parse(&content).with_context(|| format!("invalid {}", path.display()))?;
 
-    let content =
-        std::fs::read_to_string(&path).map_err(|e| Error::Message(format!("can't read {}: {e}", path.display())))?;
-    let path = path.display();
-    let settings = parse(&content).map_err(|e| Error::Message(format!("invalid {path}: {e}")))?;
-
-    if settings
+    if file
         .tag_prefix
         .as_deref()
-        .is_some_and(|prefix| !valid_tag_prefix(prefix))
+        .is_some_and(|prefix| !is_valid_tag_prefix(prefix))
     {
-        return error(format!(
-            "invalid {path}: tag_prefix must be a lowercase image name, e.g. sndbx"
-        ));
+        bail!(
+            "invalid {}: tag_prefix must be a lowercase image name, e.g. sndbx",
+            path.display()
+        );
     }
 
-    Ok(settings)
+    Ok(Settings { file })
 }
 
 /// The first document, empty settings when there's none or it's empty
-fn parse(content: &str) -> std::result::Result<File, serde_norway::Error> {
+fn parse(content: &str) -> Result<File, serde_norway::Error> {
     let Some(document) = serde_norway::Deserializer::from_str(content).next() else {
         return Ok(File::default());
     };
@@ -185,7 +185,7 @@ fn parse(content: &str) -> std::result::Result<File, serde_norway::Error> {
 }
 
 /// Lowercase alphanumeric words joined by single `.`, `_`, `-` or `/`, like `sndbx` or `my.org/sndbx`
-fn valid_tag_prefix(prefix: &str) -> bool {
+fn is_valid_tag_prefix(prefix: &str) -> bool {
     let words_valid = prefix
         .split(['.', '_', '-', '/'])
         .all(|word| !word.is_empty() && word.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()));
@@ -195,19 +195,14 @@ fn valid_tag_prefix(prefix: &str) -> bool {
 fn create_example(path: &Path) -> Result<()> {
     std::fs::create_dir_all(dir())
         .and_then(|()| std::fs::write(path, EXAMPLE))
-        .map_err(|e| Error::Message(format!("can't create {}: {e}", path.display())))?;
-
-    Err(Error::Abort(format!(
-        "Created an example config at {}, edit it and run again.",
-        path.display()
-    )))
+        .with_context(|| format!("can't create {}", path.display()))
 }
 
 /// A YAML string; `serde_norway` would also turn numbers and booleans into a `String`
 struct Text(String);
 
 impl<'de> Deserialize<'de> for Text {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct TextVisitor;
 
         impl Visitor<'_> for TextVisitor {
@@ -217,7 +212,7 @@ impl<'de> Deserialize<'de> for Text {
                 formatter.write_str("a string")
             }
 
-            fn visit_str<E: de::Error>(self, value: &str) -> std::result::Result<Text, E> {
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Text, E> {
                 Ok(Text(value.to_string()))
             }
         }
@@ -226,16 +221,16 @@ impl<'de> Deserialize<'de> for Text {
     }
 }
 
-fn text<'de, D: Deserializer<'de>>(deserializer: D) -> std::result::Result<String, D::Error> {
+fn text<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
     Text::deserialize(deserializer).map(|Text(text)| text)
 }
 
-fn optional_text<'de, D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Option<String>, D::Error> {
+fn optional_text<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
     Ok(Option::<Text>::deserialize(deserializer)?.map(|Text(text)| text))
 }
 
 /// A list of strings, or one string, none when it's null
-fn strings<'de, D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Vec<String>, D::Error> {
+fn strings<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D::Error> {
     struct StringsVisitor;
 
     impl<'de> Visitor<'de> for StringsVisitor {
@@ -245,15 +240,15 @@ fn strings<'de, D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Ve
             formatter.write_str("a string or a list of strings")
         }
 
-        fn visit_unit<E: de::Error>(self) -> std::result::Result<Vec<String>, E> {
+        fn visit_unit<E: de::Error>(self) -> Result<Vec<String>, E> {
             Ok(Vec::new())
         }
 
-        fn visit_str<E: de::Error>(self, value: &str) -> std::result::Result<Vec<String>, E> {
+        fn visit_str<E: de::Error>(self, value: &str) -> Result<Vec<String>, E> {
             Ok(vec![value.to_string()])
         }
 
-        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> std::result::Result<Vec<String>, A::Error> {
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<Vec<String>, A::Error> {
             let mut strings = Vec::new();
             while let Some(Text(string)) = seq.next_element()? {
                 strings.push(string);
@@ -272,10 +267,10 @@ mod tests {
     #[test]
     fn tag_prefixes() {
         for valid in ["sndbx", "my.org/sndbx", "a-b_c", "x1"] {
-            assert!(valid_tag_prefix(valid), "{valid}");
+            assert!(is_valid_tag_prefix(valid), "{valid}");
         }
         for invalid in ["", "Not Valid", "a--b", "-a", "a/", "Sndbx"] {
-            assert!(!valid_tag_prefix(invalid), "{invalid}");
+            assert!(!is_valid_tag_prefix(invalid), "{invalid}");
         }
     }
 

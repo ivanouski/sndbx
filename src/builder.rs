@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
-use crate::docker::{check_docker, docker_system, image_exists};
+use anyhow::bail;
+
+use crate::docker::{self, check_docker, image_exists};
 use crate::settings::{self, Settings};
-use crate::{Result, error, puts};
+use crate::{Result, print_line};
 
 pub const BASE_NAME: &str = "base";
 pub const IMAGES_DIR_SETTING: &str = "images_dir";
@@ -13,11 +15,11 @@ pub struct Builder {
 }
 
 impl Builder {
-    pub fn new(settings: &mut Settings) -> Result<Self> {
-        Ok(Self {
-            tag_prefix: settings.tag_prefix()?,
-            images_dir: settings.images_dir()?,
-        })
+    pub fn new(settings: &Settings) -> Self {
+        Self {
+            tag_prefix: settings.tag_prefix().to_string(),
+            images_dir: settings.images_dir(),
+        }
     }
 
     pub fn image_names(&self) -> Result<Vec<String>> {
@@ -32,23 +34,20 @@ impl Builder {
         Ok(names)
     }
 
-    /// Builds `image`, or every image when it's `None`
-    pub fn call(&self, image: Option<&str>) -> Result<()> {
+    pub fn build(&self, name: &str) -> Result<()> {
         let names = self.image_names()?;
-        if let Some(image) = image
-            && !names.iter().any(|name| name == image)
-        {
-            return error(format!(
-                "unknown image '{image}', expected one of: {}",
-                names.join(", ")
-            ));
+        if !names.iter().any(|known| known == name) {
+            bail!("unknown image '{name}', expected one of: {}", names.join(", "));
         }
 
         check_docker()?;
+        self.build_with_base(name)
+    }
 
-        if let Some(image) = image {
-            return self.build_with_base(image);
-        }
+    /// Builds the base image, then every other one
+    pub fn build_all(&self) -> Result<()> {
+        let names = self.image_names()?;
+        check_docker()?;
 
         self.build_with_base(BASE_NAME)?;
         names
@@ -59,34 +58,35 @@ impl Builder {
 
     fn build_with_base(&self, name: &str) -> Result<()> {
         if name != BASE_NAME && self.needs_base(name)? && !self.base_exists() {
-            puts(&format!("==> {} doesn't exist yet", self.tag_for(BASE_NAME)));
-            self.build(BASE_NAME)?;
+            print_line(&format!("==> {} doesn't exist yet", self.tag_for(BASE_NAME)));
+            self.docker_build(BASE_NAME)?;
         }
 
-        self.build(name)
+        self.docker_build(name)
     }
 
-    fn build(&self, name: &str) -> Result<()> {
+    fn docker_build(&self, name: &str) -> Result<()> {
         let tag = self.tag_for(name);
-
-        // Only images FROM ${TAG_PREFIX}:base declare the arg, docker warns about unused ones.
-        let mut args = vec![String::from("build"), String::from("--no-cache")];
-        if self.needs_base(name)? {
-            args.extend([String::from("--build-arg"), format!("TAG_PREFIX={}", self.tag_prefix)]);
-        }
         let image_dir = self.image_dir(name).display().to_string();
-        args.extend([String::from("-t"), tag.clone(), image_dir.clone()]);
+        let tag_prefix_arg = format!("TAG_PREFIX={}", self.tag_prefix);
 
-        puts(&format!("==> Building {tag} from {image_dir}"));
-        if !docker_system(&args) {
-            return error(format!("failed to build {tag}"));
+        let mut args = vec!["build", "--no-cache"];
+        // Only images FROM ${TAG_PREFIX}:base declare the arg, docker warns about unused ones.
+        if self.needs_base(name)? {
+            args.extend(["--build-arg", &tag_prefix_arg]);
+        }
+        args.extend(["-t", &tag, &image_dir]);
+
+        print_line(&format!("==> Building {tag} from {image_dir}"));
+        if !docker::run(&args) {
+            bail!("failed to build {tag}");
         }
         Ok(())
     }
 
     fn needs_base(&self, name: &str) -> Result<bool> {
         let dockerfile = std::fs::read(self.image_dir(name).join("Dockerfile"))?;
-        Ok(from_base(&String::from_utf8_lossy(&dockerfile)))
+        Ok(is_from_base(&String::from_utf8_lossy(&dockerfile)))
     }
 
     fn base_exists(&self) -> bool {
@@ -106,16 +106,16 @@ impl Builder {
             return Ok(());
         }
 
-        error(format!(
+        bail!(
             "images directory {} does not exist, set {IMAGES_DIR_SETTING} in {}",
             self.images_dir.display(),
             settings::path().display()
-        ))
+        )
     }
 }
 
 /// Whether a line of the Dockerfile is `FROM ${TAG_PREFIX}:base`, maybe followed by `AS <name>`
-fn from_base(dockerfile: &str) -> bool {
+fn is_from_base(dockerfile: &str) -> bool {
     let image = format!("${{TAG_PREFIX}}:{BASE_NAME}");
     dockerfile.lines().any(|line| {
         let Some(rest) = line.strip_prefix("FROM") else {
@@ -135,13 +135,13 @@ mod tests {
 
     #[test]
     fn finds_the_base_image() {
-        assert!(from_base("ARG TAG_PREFIX=sndbx\nFROM ${TAG_PREFIX}:base\n"));
-        assert!(from_base("FROM\t${TAG_PREFIX}:base AS build\r\n"));
-        assert!(from_base("FROM ${TAG_PREFIX}:base"));
-        assert!(!from_base("FROM ubuntu\n"));
-        assert!(!from_base("FROM ${TAG_PREFIX}:base2\n"));
-        assert!(!from_base("FROM${TAG_PREFIX}:base\n"));
-        assert!(!from_base(" FROM ${TAG_PREFIX}:base\n"));
-        assert!(!from_base("# FROM ${TAG_PREFIX}:base\n"));
+        assert!(is_from_base("ARG TAG_PREFIX=sndbx\nFROM ${TAG_PREFIX}:base\n"));
+        assert!(is_from_base("FROM\t${TAG_PREFIX}:base AS build\r\n"));
+        assert!(is_from_base("FROM ${TAG_PREFIX}:base"));
+        assert!(!is_from_base("FROM ubuntu\n"));
+        assert!(!is_from_base("FROM ${TAG_PREFIX}:base2\n"));
+        assert!(!is_from_base("FROM${TAG_PREFIX}:base\n"));
+        assert!(!is_from_base(" FROM ${TAG_PREFIX}:base\n"));
+        assert!(!is_from_base("# FROM ${TAG_PREFIX}:base\n"));
     }
 }

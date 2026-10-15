@@ -4,8 +4,10 @@ use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+use anyhow::{Context, bail};
+
 use crate::paths::shell_join;
-use crate::{Error, Result, error, paths};
+use crate::{Result, paths};
 
 const DOCKER: &str = "docker";
 pub const IMAGE_LABEL: &str = "sndbx.image";
@@ -15,15 +17,15 @@ pub fn log_path() -> PathBuf {
 }
 
 pub fn check_docker() -> Result<()> {
-    match quiet_system(&["info"]) {
-        None => error("docker is not installed"),
-        Some(false) => error("docker is not running"),
+    match run_quietly(&["info"]) {
+        None => bail!("docker is not installed"),
+        Some(false) => bail!("docker is not running"),
         Some(true) => Ok(()),
     }
 }
 
 pub fn image_exists(tag: &str) -> bool {
-    quiet_system(&["image", "inspect", tag]) == Some(true)
+    run_quietly(&["image", "inspect", tag]) == Some(true)
 }
 
 pub fn running_containers(image: &str) -> Result<Vec<String>> {
@@ -48,46 +50,46 @@ fn containers(image: &str, ps_args: &[&str]) -> Result<Vec<String>> {
             .lines()
             .map(ToString::to_string)
             .collect()),
-        _ => error("failed to list containers"),
+        _ => bail!("failed to list containers"),
     }
 }
 
 pub fn check_container(container: &str, containers: &[String], description: &str) -> Result<()> {
     if containers.is_empty() {
-        return error(format!("no {description}"));
+        bail!("no {description}");
     }
     if containers.iter().any(|name| name == container) {
         return Ok(());
     }
 
-    error(format!(
+    bail!(
         "container '{container}' is not a {description}, expected one of: {}",
         containers.join(", ")
-    ))
+    )
 }
 
 /// Replaces sndbx with docker, returning only if docker can't run
-pub fn docker_exec(args: &[String]) -> Result<()> {
+pub fn exec<S: AsRef<str>>(args: &[S]) -> Result<()> {
     log_command(args);
     let _ = std::io::stdout().flush();
-    let e = Command::new(DOCKER).args(args).exec();
-    error(format!("can't run {DOCKER}: {e}"))
+    let e = Command::new(DOCKER).args(args.iter().map(AsRef::as_ref)).exec();
+    Err(e).context(format!("can't run {DOCKER}"))
 }
 
-pub fn docker_system(args: &[String]) -> bool {
+/// Runs docker and waits for it, whether it succeeded
+pub fn run<S: AsRef<str>>(args: &[S]) -> bool {
     log_command(args);
     let _ = std::io::stdout().flush();
     Command::new(DOCKER)
-        .args(args)
+        .args(args.iter().map(AsRef::as_ref))
         .status()
         .is_ok_and(|status| status.success())
 }
 
 /// A log that can't be written doesn't stop the command
-fn log_command(args: &[String]) {
+fn log_command<S: AsRef<str>>(args: &[S]) {
     let path = log_path();
-    let mut command = vec![DOCKER.to_string()];
-    command.extend_from_slice(args);
+    let command: Vec<&str> = std::iter::once(DOCKER).chain(args.iter().map(AsRef::as_ref)).collect();
     let line = format!("{} {}\n", jiff::Zoned::now().strftime("%FT%T%:z"), shell_join(&command));
 
     let written = path
@@ -100,8 +102,8 @@ fn log_command(args: &[String]) {
     }
 }
 
-/// `None` if the command can't run, like Ruby's `system` returning nil
-fn quiet_system(args: &[&str]) -> Option<bool> {
+/// Runs docker without its output: whether it succeeded, `None` if it can't run at all
+fn run_quietly(args: &[&str]) -> Option<bool> {
     Command::new(DOCKER)
         .args(args)
         .stdout(Stdio::null())
@@ -109,10 +111,4 @@ fn quiet_system(args: &[&str]) -> Option<bool> {
         .status()
         .ok()
         .map(|status| status.success())
-}
-
-impl From<std::io::Error> for Error {
-    fn from(e: std::io::Error) -> Self {
-        Self::Message(e.to_string())
-    }
 }

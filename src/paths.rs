@@ -1,5 +1,5 @@
 //! Path and shell helpers. Host paths are `PathBuf`s; paths inside the container, like mount targets,
-//! are `String`s that only docker reads, joined like Ruby's `File.join`.
+//! are `String`s that only docker reads, joined with `join`.
 
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
@@ -12,8 +12,8 @@ pub fn current_dir() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
 }
 
-/// Like Ruby's `File.expand_path`: expands `~`, resolves `path` against `base`, the current directory
-/// by default, and removes `.`, `..` and repeated slashes without following symlinks.
+/// Expands `~`, resolves `path` against `base`, the current directory by default,
+/// and removes `.`, `..` and repeated slashes without following symlinks.
 pub fn expand_path(path: impl AsRef<Path>, base: Option<&Path>) -> PathBuf {
     let path = path.as_ref();
     let absolute = match path.strip_prefix("~") {
@@ -38,7 +38,7 @@ pub fn normalize(path: &Path) -> PathBuf {
     normalized
 }
 
-/// Like Ruby's `File.join`: joins with one slash between parts, whatever slashes they have.
+/// Joins with one slash between parts, whatever slashes they have, like `/a/b` for `/a/` and `/b`
 pub fn join(parts: &[&str]) -> String {
     let mut joined = String::new();
     for (index, part) in parts.iter().enumerate() {
@@ -54,16 +54,16 @@ pub fn join(parts: &[&str]) -> String {
     joined
 }
 
-/// Like Ruby's `File.identical?`: whether both paths exist and are the same file, following symlinks.
-pub fn identical(first: &Path, second: &Path) -> bool {
+/// Whether both paths exist and are the same file, following symlinks
+pub fn is_same_file(first: &Path, second: &Path) -> bool {
     match (first.metadata(), second.metadata()) {
         (Ok(first), Ok(second)) => first.dev() == second.dev() && first.ino() == second.ino(),
         _ => false,
     }
 }
 
-/// Like Ruby's `Shellwords.join`
-pub fn shell_join(words: &[String]) -> String {
+/// The words as a shell command line, each escaped with `shell_escape`
+pub fn shell_join(words: &[&str]) -> String {
     words
         .iter()
         .map(|word| shell_escape(word))
@@ -71,6 +71,8 @@ pub fn shell_join(words: &[String]) -> String {
         .join(" ")
 }
 
+/// A backslash before each character a shell treats specially, `''` for an empty word,
+/// and a newline in single quotes
 fn shell_escape(word: &str) -> String {
     if word.is_empty() {
         return String::from("''");
@@ -113,8 +115,8 @@ mod tests {
     }
 
     #[test]
-    fn shell_join_escapes_like_ruby() {
-        let words = ["docker", "my dir", "", "a\nb", "x=$y", "/a:b@c,d+e"].map(String::from);
+    fn shell_join_escapes() {
+        let words = ["docker", "my dir", "", "a\nb", "x=$y", "/a:b@c,d+e"];
         assert_eq!(shell_join(&words), "docker my\\ dir '' a'\n'b x\\=\\$y /a:b@c,d+e");
     }
 }
