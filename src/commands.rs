@@ -56,7 +56,7 @@ enum Commands {
         args_override_self = true,
         override_usage = "sndbx build IMAGE | --all",
         before_help = format!(
-            "Builds an image from {IMAGES_DIR_SETTING}/IMAGE, always without the docker cache.\n\
+            "Builds an image from `{IMAGES_DIR_SETTING}`/IMAGE, always without the docker cache.\n\
              Builds {BASE_NAME} first if the image needs it and it doesn't exist yet."
         )
     )]
@@ -67,7 +67,7 @@ enum Commands {
         help_template = COMMAND_HELP_TEMPLATE,
         infer_long_args = true,
         args_override_self = true,
-        override_usage = "sndbx exec IMAGE CONTAINER COMMAND [ARGS] | IMAGE --list",
+        override_usage = "sndbx exec IMAGE CONTAINER [options] COMMAND [ARGS]",
         before_help = "Runs COMMAND in a running sandbox of IMAGE, like docker exec -i,\n\
                        with -t when stdin is a terminal.\n\
                        Options go before COMMAND, everything from COMMAND on goes to it."
@@ -79,11 +79,20 @@ enum Commands {
         help_template = COMMAND_HELP_TEMPLATE,
         infer_long_args = true,
         args_override_self = true,
-        override_usage = "sndbx resume IMAGE CONTAINER | IMAGE --list",
+        override_usage = "sndbx resume IMAGE CONTAINER",
         before_help = "Restarts a stopped sandbox of IMAGE, kept by run --keep, and attaches to it,\n\
                        like docker start -ai."
     )]
     Resume(Resume),
+
+    /// Print image or sandbox names
+    #[command(
+        help_template = COMMAND_HELP_TEMPLATE,
+        disable_help_subcommand = true,
+        override_usage = "sndbx list WHAT",
+        before_help = "Prints image or sandbox names, one per line."
+    )]
+    List(List),
 
     /// Follow the log of docker commands
     #[command(
@@ -102,8 +111,7 @@ enum Commands {
 #[derive(Args)]
 struct Run {
     /// The image's name in the settings
-    #[arg(required_unless_present = "list")]
-    image: Option<String>,
+    image: String,
 
     #[arg(
         short,
@@ -133,10 +141,6 @@ struct Run {
     #[arg(short, long)]
     keep: bool,
 
-    /// Print image names
-    #[arg(short, long)]
-    list: bool,
-
     /// More docker run arguments
     #[arg(last = true, value_name = "DOCKER_ARGS")]
     docker_args: Vec<String>,
@@ -145,15 +149,11 @@ struct Run {
 #[derive(Args)]
 struct Build {
     /// The image's directory in `images_dir`
-    #[arg(required_unless_present_any = ["all", "list"], conflicts_with = "all")]
+    #[arg(required_unless_present = "all", conflicts_with = "all")]
     image: Option<String>,
 
     #[arg(short, long, help = format!("Build {BASE_NAME}, then every other image"))]
     all: bool,
-
-    /// Print image names
-    #[arg(short, long)]
-    list: bool,
 }
 
 #[derive(Args)]
@@ -162,12 +162,11 @@ struct Exec {
     image: String,
 
     /// A running container's name
-    #[arg(required_unless_present = "list", conflicts_with = "list")]
-    container: Option<String>,
+    container: String,
 
     /// The command and its arguments
     #[arg(
-        required_unless_present = "list",
+        required = true,
         trailing_var_arg = true,
         allow_hyphen_values = true,
         value_name = "COMMAND"
@@ -183,10 +182,6 @@ struct Exec {
         value_parser = NonEmptyStringValueParser::new()
     )]
     user: Option<String>,
-
-    /// Print IMAGE's running containers
-    #[arg(short, long)]
-    list: bool,
 }
 
 #[derive(Args)]
@@ -195,12 +190,38 @@ struct Resume {
     image: String,
 
     /// A stopped container's name
-    #[arg(required_unless_present = "list", conflicts_with = "list")]
-    container: Option<String>,
+    container: String,
+}
 
-    /// Print IMAGE's stopped containers
-    #[arg(short, long)]
-    list: bool,
+#[derive(Args)]
+struct List {
+    #[command(subcommand)]
+    what: Option<ListWhat>,
+}
+
+#[derive(Subcommand)]
+enum ListWhat {
+    /// Images in the settings, which run, exec and resume take
+    #[command(help_template = COMMAND_HELP_TEMPLATE, override_usage = "sndbx list configured")]
+    Configured,
+
+    /// Images in `images_dir`, which build takes
+    #[command(help_template = COMMAND_HELP_TEMPLATE, override_usage = "sndbx list buildable")]
+    Buildable,
+
+    /// IMAGE's running sandboxes, which exec takes
+    #[command(help_template = COMMAND_HELP_TEMPLATE, override_usage = "sndbx list running IMAGE")]
+    Running(ListImage),
+
+    /// IMAGE's stopped sandboxes, which resume takes
+    #[command(help_template = COMMAND_HELP_TEMPLATE, override_usage = "sndbx list stopped IMAGE")]
+    Stopped(ListImage),
+}
+
+#[derive(Args)]
+struct ListImage {
+    /// The image's name in the settings
+    image: String,
 }
 
 #[derive(Args)]
@@ -229,19 +250,13 @@ pub fn cli() -> Result<()> {
         Commands::Build(args) => build(&args),
         Commands::Exec(args) => exec(args),
         Commands::Resume(args) => resume(args),
+        Commands::List(args) => list(args),
         Commands::Logs(args) => logs(&args),
     }
 }
 
 fn run(args: Run) -> Result<()> {
-    if args.list {
-        if settings::path().exists() {
-            print_lines(&Settings::default().image_names()?);
-        }
-        return Ok(());
-    }
-
-    let image = Settings::default().image(&args.image.unwrap_or_default())?;
+    let image = Settings::default().image(&args.image)?;
     let options = Options {
         volumes: args.volumes,
         ports: args.ports,
@@ -253,24 +268,12 @@ fn run(args: Run) -> Result<()> {
 }
 
 fn build(args: &Build) -> Result<()> {
-    let builder = Builder::new(&mut Settings::default())?;
-    if args.list {
-        print_lines(&builder.image_names()?);
-        return Ok(());
-    }
-
-    builder.call(args.image.as_deref())
+    Builder::new(&mut Settings::default())?.call(args.image.as_deref())
 }
 
 fn exec(args: Exec) -> Result<()> {
-    if args.list {
-        check_docker()?;
-        print_lines(&running_containers(&args.image)?);
-        return Ok(());
-    }
-
     let image = &args.image;
-    let container = args.container.unwrap_or_default();
+    let container = args.container;
     Settings::default().image(image)?;
     check_docker()?;
     check_container(
@@ -293,14 +296,8 @@ fn exec(args: Exec) -> Result<()> {
 }
 
 fn resume(args: Resume) -> Result<()> {
-    if args.list {
-        check_docker()?;
-        print_lines(&stopped_containers(&args.image)?);
-        return Ok(());
-    }
-
     let image = &args.image;
-    let container = args.container.unwrap_or_default();
+    let container = args.container;
     Settings::default().image(image)?;
     check_docker()?;
     check_container(
@@ -309,6 +306,32 @@ fn resume(args: Resume) -> Result<()> {
         &format!("stopped {image} sandbox"),
     )?;
     docker_exec(&[String::from("start"), String::from("-ai"), container])
+}
+
+fn list(args: List) -> Result<()> {
+    let names = match args.what {
+        None => {
+            let mut out = std::io::stdout().lock();
+            if let Some(list) = Cli::command().find_subcommand_mut("list") {
+                let _ = list.write_help(&mut out);
+            }
+            return Ok(());
+        }
+        // Reading missing settings would create the example ones
+        Some(ListWhat::Configured) if !settings::path().exists() => Vec::new(),
+        Some(ListWhat::Configured) => Settings::default().image_names()?,
+        Some(ListWhat::Buildable) => Builder::new(&mut Settings::default())?.image_names()?,
+        Some(ListWhat::Running(args)) => {
+            check_docker()?;
+            running_containers(&args.image)?
+        }
+        Some(ListWhat::Stopped(args)) => {
+            check_docker()?;
+            stopped_containers(&args.image)?
+        }
+    };
+    print_lines(&names);
+    Ok(())
 }
 
 fn logs(args: &Logs) -> Result<()> {

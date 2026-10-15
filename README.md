@@ -25,7 +25,7 @@ The `dsh` image patches out dsh's refusal to listen on `0.0.0.0`, the check upst
 sndbx build claude    # build/rebuild sndbx:claude, and sndbx:base first if it doesn't exist yet
 sndbx build base      # build/rebuild sndbx:base
 sndbx build --all     # build/rebuild sndbx:base, then every other image
-sndbx build --list    # print the images build accepts
+sndbx list buildable  # print the images build accepts
 ```
 
 `sndbx build claude` won't rebuild an existing `sndbx:base`. To pick up base changes, run `sndbx build base` before it.
@@ -97,12 +97,13 @@ sndbx run claude -v ./garmin/sdk:/opt/garmin/sdk:ro   # also mount a read-only S
 sndbx run claude -p 3000 -p 8080:80                   # publish ports, 3000 means 3000:3000
 sndbx run claude -- --memory=8g -e FOO=bar            # pass extra arguments to docker run
 sndbx run claude -k                                   # keep the container after it exits, for sndbx resume
-sndbx run --list                                      # print configured image names
 sndbx exec claude gifted_mcnulty bash                 # run a command in a running claude sandbox, like docker exec -it
 sndbx exec -u root claude gifted_mcnulty bash         # as root
-sndbx exec claude --list                              # print the running claude sandboxes
 sndbx resume claude sleepy_babbage                    # restart a stopped claude sandbox, like docker start -ai
-sndbx resume claude --list                            # print the stopped claude sandboxes
+sndbx list configured                                 # print the image names in the settings
+sndbx list buildable                                  # print the image names build accepts
+sndbx list running claude                             # print the running claude sandboxes
+sndbx list stopped claude                             # print the stopped claude sandboxes
 sndbx logs                                            # follow the log of docker commands, like tail -f
 sndbx logs -n 50                                      # start with the last 50 lines
 sndbx --version

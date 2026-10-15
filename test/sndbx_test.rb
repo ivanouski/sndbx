@@ -63,11 +63,17 @@ class SndbxTest < Minitest::Test
   end
 
   def test_exec_help
-    assert_help 'Usage: sndbx exec IMAGE CONTAINER COMMAND [ARGS] | IMAGE --list', sndbx('exec', '-h')
+    assert_help 'Usage: sndbx exec IMAGE CONTAINER [options] COMMAND [ARGS]', sndbx('exec', '-h')
   end
 
   def test_resume_help
-    assert_help 'Usage: sndbx resume IMAGE CONTAINER | IMAGE --list', sndbx('resume', '-h')
+    assert_help 'Usage: sndbx resume IMAGE CONTAINER', sndbx('resume', '-h')
+  end
+
+  def test_list_help
+    assert_help 'Usage: sndbx list WHAT', sndbx('list', '-h')
+    assert_help 'Usage: sndbx list WHAT', sndbx('list')
+    assert_help 'Usage: sndbx list running IMAGE', sndbx('list', 'running', '-h')
   end
 
   def test_logs_help
@@ -364,7 +370,7 @@ class SndbxTest < Minitest::Test
     missing = File.join(@root, 'missing')
 
     assert_predicate sndbx('-h', env: { 'HOME' => missing }), :success?
-    assert_predicate sndbx('run', '--list', env: { 'HOME' => missing }), :success?
+    assert_predicate sndbx('list', 'configured', env: { 'HOME' => missing }), :success?
   end
 
   def test_refuses_to_mount_root
@@ -543,29 +549,29 @@ class SndbxTest < Minitest::Test
     assert_usage_error "unexpected argument 'codex' found", sndbx('run', 'claude', 'codex')
   end
 
-  def test_run_list
+  def test_list_configured
     write_settings(images: [{ name: 'claude', user: 'ubuntu' }, { name: 'codex', user: 'ubuntu' }])
 
-    assert_equal "claude\ncodex\n", sndbx('run', '--list').out
+    assert_equal "claude\ncodex\n", sndbx('list', 'configured').out
   end
 
-  def test_run_list_without_settings_does_not_create_them
-    result = sndbx('run', '--list')
+  def test_list_configured_without_settings_does_not_create_them
+    result = sndbx('list', 'configured')
 
     assert_predicate result, :success?
     assert_empty result.out
     refute File.exist?(settings_path)
   end
 
-  def test_build_list
+  def test_list_buildable
     write_build_settings
     mkdir('images/not-an-image')
 
-    assert_equal "base\nclaude\nplain\n", sndbx('build', '--list').out
+    assert_equal "base\nclaude\nplain\n", sndbx('list', 'buildable').out
   end
 
-  def test_build_list_defaults_to_the_repo_images
-    result = sndbx('build', '--list')
+  def test_list_buildable_defaults_to_the_repo_images
+    result = sndbx('list', 'buildable')
 
     assert_equal Dir.glob('*/Dockerfile', base: REPO_IMAGES_DIR).map { |path| File.dirname(path) }.sort,
                  result.out.lines(chomp: true)
@@ -575,7 +581,7 @@ class SndbxTest < Minitest::Test
   def test_build_with_relative_images_dir
     write_build_settings(images_dir: '../../images', home: @root)
 
-    assert_equal "base\nclaude\nplain\n", sndbx('build', '--list', env: { 'HOME' => @root }).out
+    assert_equal "base\nclaude\nplain\n", sndbx('list', 'buildable', env: { 'HOME' => @root }).out
   end
 
   def test_build_builds_missing_base_first
@@ -769,25 +775,25 @@ class SndbxTest < Minitest::Test
     assert_error 'docker is not installed', sndbx('exec', 'claude', 'gifted_mcnulty', 'bash', docker: false)
   end
 
-  def test_exec_list
+  def test_list_running
     write_exec_settings
 
-    assert_equal "gifted_mcnulty\nquirky_hopper\n", sndbx('exec', 'claude', '--list').out
-    assert_equal "eager_turing\n", sndbx('exec', '-l', 'codex').out
-    assert_empty sndbx('exec', 'opencode', '--list').out
+    assert_equal "gifted_mcnulty\nquirky_hopper\n", sndbx('list', 'running', 'claude').out
+    assert_equal "eager_turing\n", sndbx('list', 'running', 'codex').out
+    assert_empty sndbx('list', 'running', 'opencode').out
   end
 
-  def test_exec_list_without_settings_does_not_create_them
+  def test_list_running_without_settings_does_not_create_them
     add_docker_container('claude', 'gifted_mcnulty')
 
-    assert_equal "gifted_mcnulty\n", sndbx('exec', 'claude', '--list').out
+    assert_equal "gifted_mcnulty\n", sndbx('list', 'running', 'claude').out
     refute File.exist?(settings_path)
   end
 
-  def test_exec_list_needs_one_image
-    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('exec', '--list')
-    assert_usage_error "the argument '[CONTAINER]' cannot be used with '--list'",
-                       sndbx('exec', 'claude', 'gifted_mcnulty', '--list')
+  def test_list_running_needs_one_image
+    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('list', 'running')
+    assert_usage_error "unexpected argument 'gifted_mcnulty' found",
+                       sndbx('list', 'running', 'claude', 'gifted_mcnulty')
   end
 
   def test_resume
@@ -836,17 +842,26 @@ class SndbxTest < Minitest::Test
     assert_error 'docker is not installed', sndbx('resume', 'claude', 'sleepy_babbage', docker: false)
   end
 
-  def test_resume_list
+  def test_list_stopped
     write_resume_settings
 
-    assert_equal "sleepy_babbage\n", sndbx('resume', 'claude', '--list').out
-    assert_empty sndbx('resume', '-l', 'codex').out
+    assert_equal "sleepy_babbage\n", sndbx('list', 'stopped', 'claude').out
+    assert_empty sndbx('list', 'stopped', 'codex').out
   end
 
-  def test_resume_list_needs_one_image
-    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('resume', '--list')
-    assert_usage_error "the argument '[CONTAINER]' cannot be used with '--list'",
-                       sndbx('resume', 'claude', 'sleepy_babbage', '--list')
+  def test_list_stopped_needs_one_image
+    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('list', 'stopped')
+  end
+
+  def test_list_needs_a_known_list
+    assert_usage_error "unrecognized subcommand 'images'", sndbx('list', 'images')
+  end
+
+  def test_old_list_options_are_gone
+    assert_usage_error "unexpected argument '--list' found", sndbx('run', '--list')
+    assert_usage_error "unexpected argument '--list' found", sndbx('build', '--list')
+    assert_usage_error "unexpected argument '--list' found", sndbx('exec', 'claude', '--list')
+    assert_usage_error "unexpected argument '--list' found", sndbx('resume', 'claude', '--list')
   end
 
   def test_logs_docker_commands
@@ -877,9 +892,10 @@ class SndbxTest < Minitest::Test
   def test_does_not_log_lists
     write_resume_settings
 
-    sndbx('run', '--list')
-    sndbx('exec', 'claude', '--list')
-    sndbx('resume', 'claude', '--list')
+    sndbx('list', 'configured')
+    sndbx('list', 'buildable')
+    sndbx('list', 'running', 'claude')
+    sndbx('list', 'stopped', 'claude')
 
     refute File.exist?(log_path)
   end

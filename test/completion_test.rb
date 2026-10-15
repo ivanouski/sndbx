@@ -48,13 +48,13 @@ class CompletionTest < Minitest::Test
   end
 
   def test_options_match_help
-    [[], ['run'], ['build'], ['exec'], ['resume'], ['logs']].each do |command|
+    [[], ['run'], ['build'], ['exec'], ['resume'], ['list'], ['list', 'running'], ['logs']].each do |command|
       assert_equal help_options(*command), complete(*command, '-'), "options of sndbx #{command.join(' ')}"
     end
   end
 
   def test_commands
-    assert_equal %w[build exec logs resume run], complete('')
+    assert_equal %w[build exec list logs resume run], complete('')
     assert_equal %w[resume run], complete('r')
     assert_equal %w[run], complete('ru')
   end
@@ -196,14 +196,6 @@ class CompletionTest < Minitest::Test
     assert_empty complete('exec', '-u', '')
   end
 
-  def test_exec_list_completes_nothing_after_the_image
-    write_images_settings
-
-    assert_empty complete('exec', 'claude', '--list', '')
-    assert_empty complete('exec', '-l', 'claude', '')
-    assert_equal %w[claude codex], complete('exec', '--list', '')
-  end
-
   def test_resume_images
     write_images_settings
 
@@ -226,8 +218,26 @@ class CompletionTest < Minitest::Test
     write_images_settings
 
     assert_empty complete('resume', 'claude', 'sleepy_babbage', '')
-    assert_empty complete('resume', 'claude', '--list', '')
-    assert_equal %w[claude codex], complete('resume', '--list', '')
+  end
+
+  def test_list_what
+    assert_equal %w[buildable configured running stopped], complete('list', '')
+    assert_equal %w[running], complete('list', 'r')
+  end
+
+  def test_list_images_for_running_and_stopped
+    write_images_settings
+
+    assert_equal %w[claude codex], complete('list', 'running', '')
+    assert_equal %w[codex], complete('list', 'stopped', 'co')
+  end
+
+  def test_list_completes_nothing_after_the_last_argument
+    write_images_settings
+
+    assert_empty complete('list', 'configured', '')
+    assert_empty complete('list', 'buildable', '')
+    assert_empty complete('list', 'running', 'claude', '')
   end
 
   def test_logs_completes_nothing_but_options
