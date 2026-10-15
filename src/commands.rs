@@ -3,7 +3,7 @@ use std::process::Command;
 
 use anyhow::{Context, bail};
 use clap::builder::NonEmptyStringValueParser;
-use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::builder::{BASE_NAME, Builder, IMAGES_DIR_SETTING};
 use crate::docker::{self, check_container, check_docker, running_containers, stopped_containers};
@@ -37,9 +37,6 @@ struct Cli {
 enum Commands {
     /// Run a sandboxed image
     #[command(
-        help_template = COMMAND_HELP_TEMPLATE,
-        infer_long_args = true,
-        args_override_self = true,
         override_usage = "sndbx run IMAGE [options] [-- DOCKER_ARGS]",
         before_help = format!(
             "Runs a sandboxed image from {}.\n\
@@ -52,9 +49,6 @@ enum Commands {
 
     /// Build an image
     #[command(
-        help_template = COMMAND_HELP_TEMPLATE,
-        infer_long_args = true,
-        args_override_self = true,
         override_usage = "sndbx build IMAGE | --all",
         before_help = format!(
             "Builds an image from `{IMAGES_DIR_SETTING}`/IMAGE, always without the docker cache.\n\
@@ -65,9 +59,6 @@ enum Commands {
 
     /// Run a command in a running sandbox
     #[command(
-        help_template = COMMAND_HELP_TEMPLATE,
-        infer_long_args = true,
-        args_override_self = true,
         override_usage = "sndbx exec IMAGE CONTAINER [options] COMMAND [ARGS]",
         before_help = "Runs COMMAND in a running sandbox of IMAGE, like docker exec -i,\n\
                        with -t when stdin is a terminal.\n\
@@ -77,9 +68,6 @@ enum Commands {
 
     /// Restart a stopped sandbox
     #[command(
-        help_template = COMMAND_HELP_TEMPLATE,
-        infer_long_args = true,
-        args_override_self = true,
         override_usage = "sndbx resume IMAGE CONTAINER",
         before_help = "Restarts a stopped sandbox of IMAGE, kept by run --keep, and attaches to it,\n\
                        like docker start -ai."
@@ -88,7 +76,6 @@ enum Commands {
 
     /// Print image or sandbox names
     #[command(
-        help_template = COMMAND_HELP_TEMPLATE,
         disable_help_subcommand = true,
         override_usage = "sndbx list WHAT",
         before_help = "Prints image or sandbox names, one per line."
@@ -97,9 +84,6 @@ enum Commands {
 
     /// Follow the log of docker commands
     #[command(
-        help_template = COMMAND_HELP_TEMPLATE,
-        infer_long_args = true,
-        args_override_self = true,
         override_usage = "sndbx logs [options]",
         before_help = format!(
             "Follows {}, the docker commands sndbx ran, like tail -f.",
@@ -203,19 +187,19 @@ struct List {
 #[derive(Subcommand)]
 enum ListWhat {
     /// Images in the settings, which run, exec and resume take
-    #[command(help_template = COMMAND_HELP_TEMPLATE, override_usage = "sndbx list configured")]
+    #[command(override_usage = "sndbx list configured")]
     Configured,
 
     /// Images in `images_dir`, which build takes
-    #[command(help_template = COMMAND_HELP_TEMPLATE, override_usage = "sndbx list buildable")]
+    #[command(override_usage = "sndbx list buildable")]
     Buildable,
 
     /// IMAGE's running sandboxes, which exec takes
-    #[command(help_template = COMMAND_HELP_TEMPLATE, override_usage = "sndbx list running IMAGE")]
+    #[command(override_usage = "sndbx list running IMAGE")]
     Running(ListImage),
 
     /// IMAGE's stopped sandboxes, which resume takes
-    #[command(help_template = COMMAND_HELP_TEMPLATE, override_usage = "sndbx list stopped IMAGE")]
+    #[command(override_usage = "sndbx list stopped IMAGE")]
     Stopped(ListImage),
 }
 
@@ -239,14 +223,29 @@ struct Logs {
     lines: u64,
 }
 
+/// The CLI with the settings every command shares
+fn command() -> clap::Command {
+    Cli::command().mut_subcommands(with_shared_settings)
+}
+
+fn with_shared_settings(command: clap::Command) -> clap::Command {
+    command
+        .help_template(COMMAND_HELP_TEMPLATE)
+        .infer_long_args(true)
+        .args_override_self(true)
+        .mut_subcommands(with_shared_settings)
+}
+
 pub fn cli() -> Result<()> {
-    let Some(command) = Cli::parse().command else {
+    let matches = command().get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
+    let Some(subcommand) = cli.command else {
         let mut out = std::io::stdout().lock();
-        let _ = Cli::command().write_help(&mut out);
+        let _ = command().write_help(&mut out);
         return Ok(());
     };
 
-    match command {
+    match subcommand {
         Commands::Run(args) => run(args),
         Commands::Build(args) => build(&args),
         Commands::Exec(args) => exec(&args),
@@ -319,7 +318,7 @@ fn list(args: List) -> Result<()> {
     let names = match args.what {
         None => {
             let mut out = std::io::stdout().lock();
-            if let Some(list) = Cli::command().find_subcommand_mut("list") {
+            if let Some(list) = command().find_subcommand_mut("list") {
                 let _ = list.write_help(&mut out);
             }
             return Ok(());
@@ -412,7 +411,7 @@ mod tests {
 
     #[test]
     fn cli_is_valid() {
-        Cli::command().debug_assert();
+        command().debug_assert();
     }
 
     #[test]
