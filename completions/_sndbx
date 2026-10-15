@@ -1,9 +1,35 @@
 #!/bin/bash
 
+# Bash completion for sndbx. _sndbx sets cur, the word being completed, and prev, the word before it,
+# and the _sndbx_* helpers read them from there.
+
+# Where sndbx mounts volumes in the container, MOUNT_ROOT in the Rust code
+_SNDBX_MOUNT_ROOT=/workspace
+
+# Completes cur from the words in $1
+_sndbx_reply() {
+  mapfile -t COMPREPLY < <(compgen -W "$1" -- "${cur}")
+}
+
+# Completes cur from what `sndbx list` prints for the arguments
+_sndbx_reply_list() {
+  _sndbx_reply "$(sndbx list "$@" 2>/dev/null)"
+}
+
+# Fills the caller's positionals array with the words after the command that aren't options
+_sndbx_positionals() {
+  local i
+  for (( i = 2; i < COMP_CWORD; i++ )); do
+    [[ "${COMP_WORDS[i]}" == -* ]] || positionals+=("${COMP_WORDS[i]}")
+  done
+}
+
 # Completes the docker run arguments from word $1 on with docker's own completion, files if docker has none
 _sndbx_docker_args() {
+  # Docker's directives, bits in the :DIRECTIVE line it prints last
+  local -r ERROR=1 NO_SPACE=2 NO_FILE_COMPLETION=4 DIRECTORIES_ONLY=16
   local cur="${COMP_WORDS[COMP_CWORD]}"
-  local lead="" token prefix line directive=-1 i
+  local lead="" token prefix line directive=0 i
   local -a args=() lines=() candidates=()
 
   # Rejoin the words bash split at = and :, docker completes them whole
@@ -21,12 +47,7 @@ _sndbx_docker_args() {
     directive="${BASH_REMATCH[1]}"
     unset 'lines[-1]'
   fi
-
-  # 1: error
-  if (( directive > 0 && directive & 1 )); then
-    COMPREPLY=()
-    return 0
-  fi
+  (( directive & ERROR )) && return 0
 
   # Bash replaces only the word after the last = or :, so drop what comes before it from the candidates
   if [[ "${cur}" == [=:] ]]; then
@@ -45,30 +66,114 @@ _sndbx_docker_args() {
 
   if (( ${#candidates[@]} )); then
     COMPREPLY=("${candidates[@]}")
-  elif (( directive > 0 && directive & 4 )); then
-    # 4: no file completion
-    COMPREPLY=()
-  else
-    # 16: directories only
+  elif (( ! (directive & NO_FILE_COMPLETION) )); then
     compopt -o filenames
-    if (( directive > 0 && directive & 16 )); then
+    if (( directive & DIRECTORIES_ONLY )); then
       mapfile -t COMPREPLY < <(compgen -d -P "${lead}" -- "${cur}")
     else
       mapfile -t COMPREPLY < <(compgen -f -P "${lead}" -- "${cur}")
     fi
   fi
 
-  # 2: no space after the completion
-  (( directive > 0 && directive & 2 )) && compopt -o nospace
+  (( directive & NO_SPACE )) && compopt -o nospace
   return 0
+}
+
+# Adds the workdir names for the volume SRC[:DST[:OPTS]] in $1 to the caller's workdirs,
+# and sets its has_workspace when the volume is in the workspace
+_sndbx_add_workdir() {
+  local value="${1//[\"\']/}" dir target=""
+
+  dir="${value%%:*}"
+  dir="${dir/#\~/${HOME}}"
+  dir="$(cd -- "${dir}" 2>/dev/null && pwd)" || return 0
+  [[ "${value}" == *:* ]] && target="${value#*:}" && target="${target%%:*}"
+
+  # Workdir names a volume in the workspace by its path there, any other by its absolute path
+  if [[ -z "${target}" ]]; then
+    workdirs+=("${dir##*/}")
+    has_workspace=1
+  elif [[ "${target}" == "${_SNDBX_MOUNT_ROOT}"/* ]]; then
+    workdirs+=("${target#"${_SNDBX_MOUNT_ROOT}"/}")
+    has_workspace=1
+  else
+    [[ "${target}" == "${_SNDBX_MOUNT_ROOT}" ]] && has_workspace=1
+    workdirs+=("${target}")
+  fi
+}
+
+# Completes the options and their values, then the image
+_sndbx_run() {
+  local has_image=0 has_workspace=0 i option value
+  local -a workdirs=()
+
+  # Look for an image and volumes before the current word, skipping option values
+  for (( i = 2; i < COMP_CWORD; i++ )); do
+    case "${COMP_WORDS[i]}" in
+      -v|--volume|-w|--workdir|-p|--publish)
+        option="${COMP_WORDS[i]}"
+        (( i++ ))
+        [[ "${COMP_WORDS[i]}" == "=" ]] && (( i++ ))
+        value="${COMP_WORDS[i]}"
+        # Rejoin SRC:DST:OPTS and HOST:CONTAINER, which bash splits at each colon unless they're quoted
+        while (( i + 2 < COMP_CWORD )) && [[ "${COMP_WORDS[i+1]}" == ":" ]]; do
+          value+=":${COMP_WORDS[i+2]}"
+          (( i += 2 ))
+        done
+        [[ "${option}" == -v || "${option}" == --volume ]] && _sndbx_add_workdir "${value}"
+        ;;
+      -*) ;;
+      *) has_image=1 ;;
+    esac
+  done
+
+  case "${prev}" in
+    -v|--volume)
+      compopt -o filenames
+      mapfile -t COMPREPLY < <(compgen -d -- "${cur}")
+      ;;
+    -w|--workdir)
+      # The current directory is mounted unless a volume is in the workspace
+      (( has_workspace )) || workdirs+=("${PWD##*/}")
+      _sndbx_reply "${workdirs[*]}"
+      ;;
+    -p|--publish) ;;
+    *)
+      if [[ "${cur}" == -* ]]; then
+        _sndbx_reply '-v --volume -w --workdir -p --publish -k --keep -h --help'
+      elif (( ! has_image )); then
+        _sndbx_reply_list configured
+      fi
+      ;;
+  esac
+}
+
+# Completes the image, or nothing with --all
+_sndbx_build() {
+  local has_image=0 i
+
+  # --all stands for every image
+  for (( i = 2; i < COMP_CWORD; i++ )); do
+    case "${COMP_WORDS[i]}" in
+      -a|--all) has_image=1 ;;
+      -*) ;;
+      *) has_image=1 ;;
+    esac
+  done
+
+  if [[ "${cur}" == -* ]]; then
+    _sndbx_reply '-a --all -h --help'
+  elif (( ! has_image )); then
+    _sndbx_reply_list buildable
+  fi
 }
 
 # Completes the image, then its running containers, and nothing from COMMAND on
 _sndbx_exec() {
   local -a positionals=()
-  local options_done=0 i
+  local options_done=0 count i
 
-  # Count the positionals before the current word, skipping option values; COMMAND, the third, ends the options
+  # Collect the positionals before the current word, skipping option values; COMMAND, the third, ends the options
   for (( i = 2; i < COMP_CWORD; i++ )); do
     if (( options_done )); then
       positionals+=("${COMP_WORDS[i]}")
@@ -86,59 +191,57 @@ _sndbx_exec() {
     esac
     (( ${#positionals[@]} >= 3 )) && break
   done
+  count=${#positionals[@]}
 
-  if (( ${#positionals[@]} >= 3 )); then
-    COMPREPLY=()
-  elif [[ "${prev}" == -u || "${prev}" == --user ]]; then
-    COMPREPLY=()
+  if (( count >= 3 )) || [[ "${prev}" == -u || "${prev}" == --user ]]; then
+    return 0
   elif [[ "${cur}" == -* ]] && (( ! options_done )); then
-    mapfile -t COMPREPLY < <(compgen -W '-u --user -h --help' -- "${cur}")
-  elif (( ${#positionals[@]} == 0 )); then
-    mapfile -t COMPREPLY < <(compgen -W "$(sndbx list configured 2>/dev/null)" -- "${cur}")
-  elif (( ${#positionals[@]} == 1 )); then
-    mapfile -t COMPREPLY < <(compgen -W "$(sndbx list running "${positionals[0]}" 2>/dev/null)" -- "${cur}")
-  else
-    COMPREPLY=()
+    _sndbx_reply '-u --user -h --help'
+  elif (( count == 0 )); then
+    _sndbx_reply_list configured
+  elif (( count == 1 )); then
+    _sndbx_reply_list running "${positionals[0]}"
   fi
 }
 
 # Completes the image, then its stopped containers
 _sndbx_resume() {
   local -a positionals=()
-  local i
+  local count
+  _sndbx_positionals
+  count=${#positionals[@]}
 
-  for (( i = 2; i < COMP_CWORD; i++ )); do
-    [[ "${COMP_WORDS[i]}" == -* ]] || positionals+=("${COMP_WORDS[i]}")
-  done
-
-  if (( ${#positionals[@]} >= 2 )); then
-    COMPREPLY=()
+  if (( count >= 2 )); then
+    return 0
   elif [[ "${cur}" == -* ]]; then
-    mapfile -t COMPREPLY < <(compgen -W '-h --help' -- "${cur}")
-  elif (( ${#positionals[@]} == 0 )); then
-    mapfile -t COMPREPLY < <(compgen -W "$(sndbx list configured 2>/dev/null)" -- "${cur}")
+    _sndbx_reply '-h --help'
+  elif (( count == 0 )); then
+    _sndbx_reply_list configured
   else
-    mapfile -t COMPREPLY < <(compgen -W "$(sndbx list stopped "${positionals[0]}" 2>/dev/null)" -- "${cur}")
+    _sndbx_reply_list stopped "${positionals[0]}"
   fi
 }
 
 # Completes what to list, then the image for running and stopped
 _sndbx_list() {
   local -a positionals=()
-  local i
-
-  for (( i = 2; i < COMP_CWORD; i++ )); do
-    [[ "${COMP_WORDS[i]}" == -* ]] || positionals+=("${COMP_WORDS[i]}")
-  done
+  local count
+  _sndbx_positionals
+  count=${#positionals[@]}
 
   if [[ "${cur}" == -* ]]; then
-    mapfile -t COMPREPLY < <(compgen -W '-h --help' -- "${cur}")
-  elif (( ${#positionals[@]} == 0 )); then
-    mapfile -t COMPREPLY < <(compgen -W 'configured buildable running stopped' -- "${cur}")
-  elif (( ${#positionals[@]} == 1 )) && [[ "${positionals[0]}" == running || "${positionals[0]}" == stopped ]]; then
-    mapfile -t COMPREPLY < <(compgen -W "$(sndbx list configured 2>/dev/null)" -- "${cur}")
-  else
-    COMPREPLY=()
+    _sndbx_reply '-h --help'
+  elif (( count == 0 )); then
+    _sndbx_reply 'configured buildable running stopped'
+  elif (( count == 1 )) && [[ "${positionals[0]}" == running || "${positionals[0]}" == stopped ]]; then
+    _sndbx_reply_list configured
+  fi
+}
+
+# Completes only the options, not the line count
+_sndbx_logs() {
+  if [[ "${cur}" == -* ]] && [[ "${prev}" != -n && "${prev}" != --lines ]]; then
+    _sndbx_reply '-n --lines -h --help'
   fi
 }
 
@@ -146,14 +249,14 @@ _sndbx() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
   local command="${COMP_WORDS[1]}"
-  local has_image=0 has_workspace=0 i option value dir target
-  local -a workdirs=()
+  local i
+  COMPREPLY=()
 
   if (( COMP_CWORD == 1 )); then
     if [[ "${cur}" == -* ]]; then
-      mapfile -t COMPREPLY < <(compgen -W '-V --version -h --help' -- "${cur}")
+      _sndbx_reply '-V --version -h --help'
     else
-      mapfile -t COMPREPLY < <(compgen -W 'run build exec resume list logs' -- "${cur}")
+      _sndbx_reply 'run build exec resume list logs'
     fi
     return 0
   fi
@@ -170,113 +273,21 @@ _sndbx() {
 
   # Bash splits --volume=SRC:DST into "--volume" "=" "SRC" ":" "DST", nothing completes DST or the rest
   if [[ "${cur}" == ":" || "${prev}" == ":" ]]; then
-    COMPREPLY=()
     return 0
   elif [[ "${cur}" == "=" ]]; then
-    prev="${COMP_WORDS[COMP_CWORD-1]}"
     cur=""
   elif [[ "${prev}" == "=" ]]; then
     prev="${COMP_WORDS[COMP_CWORD-2]}"
   fi
 
-  if [[ "${command}" == exec ]]; then
-    _sndbx_exec
-    return 0
-  elif [[ "${command}" == resume ]]; then
-    _sndbx_resume
-    return 0
-  elif [[ "${command}" == list ]]; then
-    _sndbx_list
-    return 0
-  fi
-
-  # Look for an image and volumes given after the command and before the current word, skipping option values
-  for (( i = 2; i < COMP_CWORD; i++ )); do
-    case "${COMP_WORDS[i]}" in
-      -v|--volume|-w|--workdir|-p|--publish)
-        option="${COMP_WORDS[i]}"
-        (( i++ ))
-        [[ "${COMP_WORDS[i]}" == "=" ]] && (( i++ ))
-        value="${COMP_WORDS[i]}"
-        # Rejoin SRC:DST:OPTS and HOST:CONTAINER, which bash splits at each colon unless they're quoted
-        while (( i + 2 < COMP_CWORD )) && [[ "${COMP_WORDS[i+1]}" == ":" ]]; do
-          value+=":${COMP_WORDS[i+2]}"
-          (( i += 2 ))
-        done
-        [[ "${option}" == -v || "${option}" == --volume ]] || continue
-
-        value="${value//[\"\']/}"
-        dir="${value%%:*}"
-        dir="${dir/#\~/${HOME}}"
-        dir="$(cd -- "${dir}" 2>/dev/null && pwd)" || continue
-        target=""
-        [[ "${value}" == *:* ]] && target="${value#*:}" && target="${target%%:*}"
-
-        # Workdir names a volume in /workspace by its path there, any other by its absolute path
-        if [[ -z "${target}" ]]; then
-          workdirs+=("${dir##*/}")
-          has_workspace=1
-        elif [[ "${target}" == /workspace/* ]]; then
-          workdirs+=("${target#/workspace/}")
-          has_workspace=1
-        else
-          [[ "${target}" == /workspace ]] && has_workspace=1
-          workdirs+=("${target}")
-        fi
-        ;;
-      -a|--all) has_image=1 ;;
-      -*) ;;
-      *) has_image=1 ;;
-    esac
-  done
-
   case "${command}" in
-    run)
-      case "${prev}" in
-        -v|--volume)
-          compopt -o filenames
-          mapfile -t COMPREPLY < <(compgen -d -- "${cur}")
-          ;;
-        -w|--workdir)
-          # The current directory is mounted unless a volume is in /workspace
-          (( has_workspace )) || workdirs+=("${PWD##*/}")
-          mapfile -t COMPREPLY < <(compgen -W "${workdirs[*]}" -- "${cur}")
-          ;;
-        -p|--publish)
-          COMPREPLY=()
-          ;;
-        *)
-          if [[ "${cur}" == -* ]]; then
-            mapfile -t COMPREPLY < <(compgen -W '-v --volume -w --workdir -p --publish -k --keep -h --help' -- "${cur}")
-          elif (( ! has_image )); then
-            mapfile -t COMPREPLY < <(compgen -W "$(sndbx list configured 2>/dev/null)" -- "${cur}")
-          else
-            COMPREPLY=()
-          fi
-          ;;
-      esac
-      ;;
-    logs)
-      if [[ "${cur}" == -* ]] && [[ "${prev}" != -n && "${prev}" != --lines ]]; then
-        mapfile -t COMPREPLY < <(compgen -W '-n --lines -h --help' -- "${cur}")
-      else
-        COMPREPLY=()
-      fi
-      ;;
-    build)
-      if [[ "${cur}" == -* ]]; then
-        mapfile -t COMPREPLY < <(compgen -W '-a --all -h --help' -- "${cur}")
-      elif (( ! has_image )); then
-        mapfile -t COMPREPLY < <(compgen -W "$(sndbx list buildable 2>/dev/null)" -- "${cur}")
-      else
-        COMPREPLY=()
-      fi
-      ;;
-    *)
-      COMPREPLY=()
-      ;;
+    run) _sndbx_run ;;
+    build) _sndbx_build ;;
+    exec) _sndbx_exec ;;
+    resume) _sndbx_resume ;;
+    list) _sndbx_list ;;
+    logs) _sndbx_logs ;;
   esac
-
   return 0
 }
 
