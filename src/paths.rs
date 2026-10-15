@@ -40,18 +40,12 @@ pub fn normalize(path: &Path) -> PathBuf {
 
 /// Joins with one slash between parts, whatever slashes they have, like `/a/b` for `/a/` and `/b`
 pub fn join(parts: &[&str]) -> String {
-    let mut joined = String::new();
-    for (index, part) in parts.iter().enumerate() {
-        if index == 0 {
-            joined.push_str(part);
-        } else {
-            let trimmed = joined.trim_end_matches('/').len();
-            joined.truncate(trimmed);
-            joined.push('/');
-            joined.push_str(part.trim_start_matches('/'));
-        }
-    }
-    joined
+    let Some((first, rest)) = parts.split_first() else {
+        return String::new();
+    };
+    rest.iter().fold(first.to_string(), |joined, part| {
+        format!("{}/{}", joined.trim_end_matches('/'), part.trim_start_matches('/'))
+    })
 }
 
 /// Whether both paths exist and are the same file, following symlinks

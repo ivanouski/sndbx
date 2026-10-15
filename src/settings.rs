@@ -186,10 +186,9 @@ fn parse(content: &str) -> Result<File, serde_norway::Error> {
 
 /// Lowercase alphanumeric words joined by single `.`, `_`, `-` or `/`, like `sndbx` or `my.org/sndbx`
 fn is_valid_tag_prefix(prefix: &str) -> bool {
-    let words_valid = prefix
+    prefix
         .split(['.', '_', '-', '/'])
-        .all(|word| !word.is_empty() && word.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()));
-    words_valid && !prefix.is_empty()
+        .all(|word| !word.is_empty() && word.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()))
 }
 
 fn create_example(path: &Path) -> Result<()> {

@@ -48,7 +48,7 @@ class CompletionTest < Minitest::Test
   end
 
   def test_options_match_help
-    [[], ['run'], ['build'], ['exec'], ['resume'], ['list'], ['list', 'running'], ['logs']].each do |command|
+    [[], ['run'], ['build'], ['exec'], ['resume'], ['list'], %w[list running], ['logs']].each do |command|
       assert_equal help_options(*command), complete(*command, '-'), "options of sndbx #{command.join(' ')}"
     end
   end

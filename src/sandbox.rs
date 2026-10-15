@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail};
@@ -239,16 +240,14 @@ fn normalize_port(spec: &str) -> Result<String> {
     // Two fields are HOST:CONTAINER, or HOST_IP:CONTAINER when the first has dots
     let fields: Vec<&str> = numbers.split(':').collect();
     let (host_ip, ports) = match fields.as_slice() {
-        [ip, _] if ip.contains('.') => (Some(*ip), &fields[1..]),
-        [_] | [_, _] => (None, &fields[..]),
-        [ip, _, _] => (Some(*ip), &fields[1..]),
-        _ => return Err(invalid()),
+        [ip, ports @ ..] if fields.len() == 3 || ip.contains('.') => (Some(*ip), ports),
+        ports => (None, ports),
     };
-    if host_ip.is_some_and(|ip| !is_ip_address(ip)) || !ports.iter().all(|port| is_digits(port)) {
+    if !matches!(ports.len(), 1 | 2)
+        || host_ip.is_some_and(|ip| ip.parse::<Ipv4Addr>().is_err())
+        || !ports.iter().all(|port| is_digits(port))
+    {
         return Err(invalid());
-    }
-    if ports.iter().any(|port| port.parse::<u16>().is_err()) {
-        bail!("invalid port '{spec}', ports go up to {}", u16::MAX);
     }
 
     Ok(match (fields.as_slice(), protocol) {
@@ -260,11 +259,6 @@ fn normalize_port(spec: &str) -> Result<String> {
 
 fn is_digits(text: &str) -> bool {
     !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit())
-}
-
-/// Digits and dots, docker checks the rest
-fn is_ip_address(text: &str) -> bool {
-    !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit() || b == b'.')
 }
 
 fn mount_target(name: &str) -> String {
@@ -287,9 +281,8 @@ mod tests {
         assert_eq!(normalize_port("8080:80").unwrap(), "8080:80");
         assert_eq!(normalize_port("127.0.0.1:3080:3080").unwrap(), "127.0.0.1:3080:3080");
         assert!(normalize_port("http").is_err());
-        assert!(normalize_port("8080:70000").is_err());
-        assert!(normalize_port("99999999999999999999999:80").is_err());
-        assert!(normalize_port("127.0.0.1:3080:70000").is_err());
+        // Docker checks the range
+        assert_eq!(normalize_port("8080:70000").unwrap(), "8080:70000");
         assert_eq!(normalize_port("1.2.3.4:80").unwrap(), "1.2.3.4:80");
         for invalid in [
             "",
@@ -304,6 +297,10 @@ mod tests {
             "80/tcp/udp",
             "+80",
             "1.2.3.4:+80",
+            "1.2.3.4.5:80",
+            "...:80",
+            "1.2.3.4:5:6:7",
+            "1.2.3.4",
         ] {
             assert!(normalize_port(invalid).is_err(), "{invalid}");
         }

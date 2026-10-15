@@ -35,7 +35,6 @@ fn main() -> ExitCode {
     };
 
     match e.downcast_ref::<Abort>() {
-        Some(Abort(message)) if message.ends_with('\n') => eprint!("{message}"),
         Some(Abort(message)) => eprintln!("{message}"),
         // With its causes, like "can't read <path>: <reason>"
         None => eprintln!("Error: {e:#}."),

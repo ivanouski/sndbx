@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
 
@@ -276,22 +277,11 @@ fn build(args: &Build) -> Result<()> {
 }
 
 fn exec(args: &Exec) -> Result<()> {
-    let image = &args.image;
     let container = &args.container;
-    Settings::load()?.image(image)?;
-    check_docker()?;
-    check_container(
-        container,
-        &running_containers(image)?,
-        &format!("running {image} sandbox"),
-    )?;
+    check_sandbox(&args.image, container, "running", running_containers)?;
 
     // Without a terminal on stdin docker refuses -t, which breaks pipes and scripts
-    let tty = if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-        "-it"
-    } else {
-        "-i"
-    };
+    let tty = if std::io::stdin().is_terminal() { "-it" } else { "-i" };
     let user = args.user.as_ref().map(|user| format!("--user={user}"));
 
     let mut docker_args = vec!["exec", tty];
@@ -302,16 +292,16 @@ fn exec(args: &Exec) -> Result<()> {
 }
 
 fn resume(args: &Resume) -> Result<()> {
-    let image = &args.image;
     let container = &args.container;
+    check_sandbox(&args.image, container, "stopped", stopped_containers)?;
+    docker::exec(&["start", "-ai", container])
+}
+
+/// Checks that the image is in the settings and the container is one of its sandboxes in `state`
+fn check_sandbox(image: &str, container: &str, state: &str, containers: fn(&str) -> Result<Vec<String>>) -> Result<()> {
     Settings::load()?.image(image)?;
     check_docker()?;
-    check_container(
-        container,
-        &stopped_containers(image)?,
-        &format!("stopped {image} sandbox"),
-    )?;
-    docker::exec(&["start", "-ai", container])
+    check_container(container, &containers(image)?, &format!("{state} {image} sandbox"))
 }
 
 fn list(args: List) -> Result<()> {
@@ -362,47 +352,9 @@ fn print_lines(lines: &[String]) {
     }
 }
 
-/// A line count of 0 or more, written as decimal, `0b` binary, `0` octal or `0x` hexadecimal,
-/// with an optional sign and single underscores between digits
 fn line_count(value: &str) -> Result<u64, String> {
-    match parse_integer(value) {
-        None => Err("expected a number".to_string()),
-        Some(count) => u64::try_from(count).map_err(|_| "expected a line count of 0 or more".to_string()),
-    }
-}
-
-fn parse_integer(value: &str) -> Option<i128> {
-    let (negative, unsigned) = match value.as_bytes().first() {
-        Some(b'-') => (true, &value[1..]),
-        Some(b'+') => (false, &value[1..]),
-        _ => (false, value),
-    };
-    let lower = unsigned.to_ascii_lowercase();
-
-    let (radix, digits) = if let Some(digits) = lower.strip_prefix("0b") {
-        (2, digits)
-    } else if let Some(digits) = lower.strip_prefix("0x") {
-        (16, digits)
-    } else if lower == "0" {
-        (10, "0")
-    } else if let Some(digits) = lower.strip_prefix('0') {
-        (8, digits)
-    } else {
-        (10, lower.as_str())
-    };
-
-    // Digits, with single underscores only between them
-    if digits.is_empty() || digits.starts_with('_') || digits.ends_with('_') || digits.contains("__") {
-        return None;
-    }
-
-    let number = digits.chars().filter(|&c| c != '_').try_fold(0_i128, |number, c| {
-        number
-            .checked_mul(i128::from(radix))?
-            .checked_add(i128::from(c.to_digit(radix)?))
-    })?;
-
-    Some(if negative { -number } else { number })
+    let count: i64 = value.parse().map_err(|_| "expected a number")?;
+    u64::try_from(count).map_err(|_| "expected a line count of 0 or more".to_string())
 }
 
 #[cfg(test)]
@@ -415,25 +367,12 @@ mod tests {
     }
 
     #[test]
-    fn integers() {
-        assert_eq!(parse_integer("10"), Some(10));
-        assert_eq!(parse_integer("-0"), Some(0));
-        assert_eq!(parse_integer("+3"), Some(3));
-        assert_eq!(parse_integer("1_000"), Some(1000));
-        assert_eq!(parse_integer("010"), Some(8));
-        assert_eq!(parse_integer("0b11"), Some(3));
-        assert_eq!(parse_integer("0X1f"), Some(31));
-        assert_eq!(parse_integer("99999999999999999999"), Some(99_999_999_999_999_999_999));
-        for invalid in ["", "x", "1__0", "_1", "1_", "0o10", "1e3", " 5", "08", "-"] {
-            assert_eq!(parse_integer(invalid), None, "{invalid}");
-        }
-    }
-
-    #[test]
     fn line_counts() {
-        assert_eq!(line_count("0x10"), Ok(16));
+        assert_eq!(line_count("10"), Ok(10));
+        assert_eq!(line_count("+3"), Ok(3));
         assert_eq!(line_count("-0"), Ok(0));
         assert!(line_count("-1").is_err());
         assert!(line_count("x").is_err());
+        assert!(line_count("0x10").is_err());
     }
 }

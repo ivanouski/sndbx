@@ -419,12 +419,6 @@ class SndbxTest < Minitest::Test
     assert_error "invalid port 'http', expected PORT or HOST:CONTAINER", sndbx('run', 'claude', '-p', 'http')
   end
 
-  def test_port_out_of_range
-    write_claude_settings
-
-    assert_error "invalid port '8080:70000', ports go up to 65535", sndbx('run', 'claude', '-p', '8080:70000')
-  end
-
   def test_run_uses_image_settings
     write_settings(
       tag_prefix: 'mine',
