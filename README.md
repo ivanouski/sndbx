@@ -15,7 +15,7 @@ The host paths are the ones the `docker run` examples below mount. `sndbx` mount
 
 All of them are built on `<tag_prefix>:base` (`sndbx:base` by default), the base image in `images/base/` (Ubuntu with node, ruby and python via mise, postgres and Playwright dependencies).
 
-The `dsh` image patches out dsh's refusal to listen on `0.0.0.0`, the check upstream added because it "would expose remote code execution to the network". The server has to listen on all interfaces inside the container for a published port to reach it, so publish the port on `127.0.0.1` only, as the examples below do. A plain `-p 3080:3080` lets anyone on your network control the agent.
+dsh refuses to listen on a wildcard address such as `0.0.0.0` because it "would expose remote code execution to the network", so the `dsh` image binds the container's own address instead, which a published port reaches. Publish the port on `127.0.0.1` only, as the examples below do. A plain `-p 3080:3080` lets anyone on your network control the agent.
 
 ## Build
 
