@@ -2,38 +2,111 @@
 
 Docker images for running coding agents in a sandbox, plus `sndbx`, a small wrapper around `docker run`.
 
-| Image      | Directory          | Config on host | Config in container             |
-| ---------- | ------------------ | -------------- | ------------------------------- |
-| `claude`   | `images/claude/`   | `~/.claude`    | `/home/ubuntu/.claude`          |
-| `opencode` | `images/opencode/` | `~/.opencode`  | `/home/ubuntu/.config/opencode` |
-| `codex`    | `images/codex/`    | `~/.codex`     | `/home/ubuntu/.codex`           |
-| `dsh`      | `images/dsh/`      | `~/.dsh`       | `/home/ubuntu/.dsh` (port 3080) |
+## Images
 
-The host paths are the ones the `docker run` examples below mount. `sndbx` mounts `~/.config/sndbx/<name>` unless an image sets `config_dir`.
+| Image      | Config in container             | Notes                                     |
+| ---------- | ------------------------------- | ----------------------------------------- |
+| `claude`   | `/home/ubuntu/.claude`          |                                           |
+| `opencode` | `/home/ubuntu/.config/opencode` | can use Ollama on the host, see below     |
+| `codex`    | `/home/ubuntu/.codex`           |                                           |
+| `dsh`      | `/home/ubuntu/.dsh`             | web UI on port 3080, publish on 127.0.0.1 |
 
-`images/opencode/opencode/config.json` is an example opencode config that uses Ollama running on the host. The image doesn't include it, so copy it into opencode's config directory on the host to use it. The examples below pass `--add-host=host.docker.internal:host-gateway` so the container can reach the host on Linux too, where Ollama must also listen beyond loopback, e.g. `OLLAMA_HOST=0.0.0.0 ollama serve`.
+All are built on `sndbx:base` (`images/base/`): Ubuntu with node, python, ruby, rust, uv and postgres via mise, and Playwright with headless Chromium.
 
-All of them are built on `<tag_prefix>:base` (`sndbx:base` by default), the base image in `images/base/` (Ubuntu with node, python, ruby, rust, uv and postgres via mise, and Playwright with headless Chromium).
+**opencode with Ollama:** `images/opencode/opencode/config.json` is an example config for Ollama on the host; copy it into opencode's config directory. The container reaches the host with `--add-host=host.docker.internal:host-gateway`, and on Linux Ollama must listen beyond loopback, e.g. `OLLAMA_HOST=0.0.0.0 ollama serve`.
 
-dsh refuses to listen on a wildcard address such as `0.0.0.0` because it "would expose remote code execution to the network", so the `dsh` image binds the container's own address instead, which a published port reaches. Publish the port on `127.0.0.1` only, as the examples below do. A plain `-p 3080:3080` lets anyone on your network control the agent.
+**dsh** refuses to listen on a wildcard address, so the image binds the container's own address, which a published port reaches. Publish it on `127.0.0.1` only: a plain `-p 3080:3080` lets anyone on your network control the agent.
+
+## Install
+
+Build and install `sndbx` into `~/.cargo/bin` with a recent Rust toolchain, e.g. [mise](https://mise.jdx.dev)'s:
+
+```sh
+cargo install --path .
+```
+
+Optionally, install the bash completion (bash 4.0+). It completes arguments after `--` with docker's own completion.
+
+```sh
+cp completions/_sndbx ~/.local/share/bash-completion/completions/sndbx   # with bash-completion
+# or source completions/_sndbx in ~/.bashrc
+```
+
+## Configure
+
+Settings live in `~/.config/sndbx/settings.yml` (`$XDG_CONFIG_HOME/sndbx/` if set). `run` creates an example when there's none, and `build` creates it with the image it built. Relative paths resolve against the settings directory. Unknown keys are an error, so typos don't go unnoticed.
+
+```yaml
+tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
+images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to this repo's images/
+docker_args: ["--security-opt=no-new-privileges", "--pids-limit=4096"] # optional, docker run arguments for every image
+images:
+  - name: claude
+    tag: my-claude:latest # optional, defaults to <tag_prefix>:<name>
+    user: ubuntu # optional, defaults to the user the image runs as
+    config_dir: ~/.claude_docker # optional, defaults to ~/.config/sndbx/<name>
+    config_target: .claude # optional, relative to the user's home, defaults to .<name>
+    docker_args: ["--memory=8g"] # optional, after the top-level ones
+  - name: opencode
+    config_target: .config/opencode
+    docker_args: ["--add-host=host.docker.internal:host-gateway"]
+  - name: codex
+  - name: dsh
+    ports: ["127.0.0.1:3080:3080"] # optional, always published; quote them
+```
+
+- **Hardening:** `no-new-privileges` stops processes from gaining privileges through setuid binaries like `su` or `sudo`, so the agent stays unprivileged; `sndbx exec -u root` still works. `--pids-limit` caps processes and threads, so a fork bomb fails in the sandbox, not on the host. Node, cargo and Chromium use many threads: raise it if builds fail with "Resource temporarily unavailable".
+- **`docker_args` order:** top-level first, then the image's, then `run -- ...`. For a flag that takes one value, like `--memory`, the last one wins; flags like `-e` or `--cap-add` add up.
+- **`user`** is only needed when the image runs as a numeric uid, whose home sndbx can't tell.
+- **`images_dir`** defaults to the repo the binary was built from. Set it if the repo moved or the binary was built elsewhere.
+
+## Use
+
+```sh
+sndbx run claude                                      # mount the current directory
+sndbx run claude -v ../api -v ../web                  # mount several, start in the last one
+sndbx run claude -v ../api -v ../web -w api           # start in api
+sndbx run claude -v ./sdk:/opt/sdk:ro                 # mount a read-only SDK, start in the current directory
+sndbx run claude -p 3000 -p 8080:80                   # publish ports, 3000 means 3000:3000
+sndbx run claude -k                                   # keep the container after it exits, for resume
+sndbx run claude -- --memory=8g -e FOO=bar            # pass extra arguments to docker run
+sndbx exec claude gifted_mcnulty bash                 # run a command in a running sandbox
+sndbx exec -u root claude gifted_mcnulty bash         # as root
+sndbx resume claude sleepy_babbage                    # restart a stopped sandbox
+sndbx list configured                                 # image names in the settings
+sndbx list buildable                                  # image names build accepts
+sndbx list running claude                             # claude's running sandboxes
+sndbx list stopped claude                             # claude's stopped sandboxes
+sndbx logs                                            # follow the log of the docker commands sndbx ran
+sndbx logs -n 50                                      # start with the last 50 lines
+```
+
+`sndbx run`:
+
+- mounts each `-v SRC[:DST[:OPTS]]` like `docker run -v`, at `/workspace/<basename>` when there's no `DST`
+- mounts the current directory at `/workspace/<basename>` unless a volume is mounted in `/workspace`
+- mounts the image's config directory at `/home/<user>/<config_target>`, where `<user>` is the one the image runs as, or `/root/<config_target>` for root
+- publishes the image's `ports` plus each `-p PORT`
+- passes the top-level `docker_args`, then the image's, then everything after `--` to `docker run`
+- labels the container `sndbx.image=<name>`, which `exec`, `resume` and `list` find it by
+
+Every docker command sndbx runs is logged to `~/.local/state/sndbx/sndbx.log` (`$XDG_STATE_HOME/sndbx/` if set), which `sndbx logs` follows.
 
 ## Build
 
-`sndbx build IMAGE...` builds each `images/IMAGE/` in turn, always with `--no-cache`. Every image is tagged `<tag_prefix>:<directory name>`, e.g. `sndbx:base`, `sndbx:claude`. The prefix is `sndbx` unless `tag_prefix` is set in the [settings](#configure).
-
 ```sh
-sndbx build claude                    # build/rebuild sndbx:claude, and sndbx:base first if it doesn't exist yet
-sndbx build claude codex              # build/rebuild sndbx:claude, then sndbx:codex
-sndbx build --rebuild-base claude dsh # build/rebuild sndbx:base, then sndbx:claude and sndbx:dsh
-sndbx build --rebuild-base            # build/rebuild sndbx:base only
-sndbx list buildable                  # print the images build accepts
+sndbx build claude             # build sndbx:claude, and sndbx:base first if it doesn't exist
+sndbx build claude codex       # build both, in order
+sndbx build -b claude          # rebuild sndbx:base first
+sndbx build -b                 # rebuild sndbx:base only
 ```
 
-`sndbx build claude` won't rebuild an existing `sndbx:base`. To pick up base changes, add `--rebuild-base` (`-b`).
+`sndbx build`:
 
-After building an image that isn't in the [settings](#configure) yet, `sndbx build` adds `- name: '<image>'` to the end of the settings file's `images`, or creates the example settings with it, so `sndbx run <image>` works right away. It appends to the file and leaves the rest as written. It mounts the config directory at `~/.<image>` in the sandbox, so set `config_target` if the agent keeps its config elsewhere. When the file's `images` isn't a block list at its end, or the file can't be written, it prints the entry to add instead.
-
-`sndbx` finds `images/` in the repo it was built from, wherever the binary is. If the repo moves, or the binary was built in another checkout or container, set `images_dir` in the [settings](#configure).
+- builds each image from `images/<name>/`, without the docker cache
+- builds `sndbx:base` first if an image needs it and it doesn't exist, or with `-b`
+- appends `- name: '<image>'` to the settings' `images` for an image that isn't there yet, so `sndbx run <image>` works right away; set `config_target` if the agent doesn't keep its config in `~/.<image>`
+- prints the entry to add instead when it can't tell where to append
 
 To add an image, create `images/<name>/Dockerfile` starting with:
 
@@ -44,144 +117,44 @@ FROM ${TAG_PREFIX}:base
 
 ## Remove
 
-`sndbx rm IMAGE...` removes images, like `docker image rm`, and comments out their entries in the [settings](#configure) under a `# Removed by sndbx rm on <date>:` line, so their settings aren't lost. Building the image again adds a fresh entry and leaves the commented-out one for you to copy from or delete. It keeps the images' config directories, with the agents' logins and history.
-
 ```sh
-sndbx rm claude          # remove sndbx:claude and comment out claude in the settings
-sndbx rm claude codex    # remove both
+sndbx rm claude codex
 ```
+
+`sndbx rm`:
+
+- removes the images, like `docker image rm`
+- comments out their entries in the settings under `# Removed by sndbx rm on <date>:`, so the settings aren't lost; building again adds a fresh entry
+- keeps their config directories, with the agents' logins and history
 
 It checks every image before removing any, and refuses:
 
 - `base`, which the other images are built on
 - an image that's neither in the settings nor built
-- an image that containers use, in any state, sandboxes kept by `run --keep` included; remove them with `docker rm` first
-- a tag that another entry also runs, unless you remove them together
+- an image that containers use, in any state; remove them with `docker rm` first
+- a tag that another entry also runs, unless both are removed together
 
-When it can't tell where an entry is in the settings, like in a flow list `[...]`, it removes the image and says to remove the entry yourself.
-
-## Run with sndbx
-
-`sndbx` wraps the `docker run` commands below with less typing. It:
-
-- mounts each `-v SRC[:DST[:OPTS]]` like `docker run -v`, at `/workspace/<basename>` when there's no `DST`
-- mounts the current directory at `/workspace/<basename>` unless a volume is mounted in `/workspace`
-- mounts the image's config directory at `/home/<user>/<config_target>`, where `<user>` is the one the image runs as, or `/root/<config_target>` for root
-- publishes the image's `ports` plus each `-p PORT`
-- passes the top-level `docker_args`, then the image's, then everything after `--` to `docker run`
-- labels the container `sndbx.image=<name>`, which `sndbx exec` and `sndbx resume` find it by
-- logs each `docker run`, `exec`, `start`, `build` and `image rm` it runs to `~/.local/state/sndbx/sndbx.log` (or under `$XDG_STATE_HOME`), which `sndbx logs` follows
-
-### Install
-
-`sndbx` is written in Rust. Build and install it into `~/.cargo/bin` from the repo with [mise](https://mise.jdx.dev)'s Rust or any other recent toolchain, on the machine that runs it:
-
-```sh
-cargo install --path .
-```
-
-Optionally, install the bash completion, it needs bash 4.0 or later. With bash-completion it loads on demand from:
-
-```sh
-cp completions/_sndbx ~/.local/share/bash-completion/completions/sndbx
-```
-
-Without bash-completion, source `completions/_sndbx` in `~/.bashrc` instead.
-
-The completion completes arguments after `--` with docker's own completion, `docker __complete run`, and falls back to file names when docker doesn't have it.
-
-### Configure
-
-Images are listed in `~/.config/sndbx/settings.yml`, or `$XDG_CONFIG_HOME/sndbx/settings.yml` when `XDG_CONFIG_HOME` is set, which also moves the default `config_dir`s and where relative paths resolve. The first run creates an example to edit. An unknown key is an error, so a misspelled one like `docker_arg` doesn't go unnoticed.
-
-```yaml
-tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
-images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to the repo's images/; relative to ~/.config/sndbx
-docker_args: ["--security-opt=no-new-privileges", "--pids-limit=4096"] # optional, docker run arguments for every image
-images:
-  - name: claude
-    tag: my-claude:latest # optional, defaults to <tag_prefix>:<name>
-    user: ubuntu # optional, whose home config_target is in, defaults to the user the image runs as
-    # config_dir: ~/.claude_docker # optional, relative paths resolve against ~/.config/sndbx, defaults to ~/.config/sndbx/<name>
-    config_target: .claude # optional, relative to the user's home, defaults to .<name>
-    docker_args: ["--memory=8g"] # optional, extra docker run arguments, after the top-level ones
-  - name: opencode
-    config_target: .config/opencode
-    docker_args: ["--add-host=host.docker.internal:host-gateway"] # optional, lets the container reach Ollama on the host on Linux
-  - name: codex
-  - name: dsh
-    ports: ["127.0.0.1:3080:3080"] # optional, always published; quote them
-```
-
-`--security-opt=no-new-privileges` keeps processes in the sandbox from gaining privileges, through setuid binaries like `su` or file capabilities, so the agent stays the unprivileged user. `--pids-limit=4096` caps the processes and threads in the sandbox, so a fork bomb or a runaway script fails there instead of filling the host's process table. Threads count too, and Node, cargo and Chromium use many, so raise the limit if builds fail with "Resource temporarily unavailable"; `docker stats` shows the count. The example settings sndbx creates set both.
-
-sndbx reads the user from the image, `USER` in its Dockerfile, so `user` is only needed to override it, or when the image runs as a numeric uid, whose name sndbx can't tell.
-
-The top-level `docker_args` come first, so an image overrides a flag that takes one value, like `--pids-limit=8192` or `--memory`, with its own: docker takes the last. Flags that add up, like `--security-opt`, `--cap-add` or `-e`, add to the top-level ones.
-
-### Use
-
-```sh
-sndbx run claude                                      # mount the current directory
-sndbx run claude -v ../api -v ../web                  # mount several, start in the last one
-sndbx run claude -v ../api -v ../web -w api           # mount several, start in api
-sndbx run claude -v ./garmin/sdk:/opt/garmin/sdk:ro   # also mount a read-only SDK, still start in the current directory
-sndbx run claude -p 3000 -p 8080:80                   # publish ports, 3000 means 3000:3000
-sndbx run claude -- --memory=8g -e FOO=bar            # pass extra arguments to docker run
-sndbx run claude -k                                   # keep the container after it exits, for sndbx resume
-sndbx exec claude gifted_mcnulty bash                 # run a command in a running claude sandbox, like docker exec -it
-sndbx exec -u root claude gifted_mcnulty bash         # as root
-sndbx resume claude sleepy_babbage                    # restart a stopped claude sandbox, like docker start -ai
-sndbx rm claude                                       # remove sndbx:claude and comment out claude in the settings
-sndbx list configured                                 # print the image names in the settings
-sndbx list buildable                                  # print the image names build accepts
-sndbx list running claude                             # print the running claude sandboxes
-sndbx list stopped claude                             # print the stopped claude sandboxes
-sndbx logs                                            # follow the log of docker commands, like tail -f
-sndbx logs -n 50                                      # start with the last 50 lines
-sndbx --version
-```
-
-`sndbx exec` finds sandboxes by their `sndbx.image` label, so it doesn't see sandboxes started before sndbx 0.15.0. It passes `-t` to `docker exec` only when stdin is a terminal, so it works in pipes and scripts.
-
-## Run with docker
-
-Each command mounts the current directory at `/workspace` and the image's config directory from the table above.
+## Run without sndbx
 
 ```sh
 docker run --rm -it \
+  --security-opt=no-new-privileges --pids-limit=4096 \
   -v ".:/workspace" \
   -v "$HOME/.claude:/home/ubuntu/.claude" \
   sndbx:claude
-
-docker run --rm -it \
-  --add-host=host.docker.internal:host-gateway \
-  -v ".:/workspace" \
-  -v "$HOME/.opencode:/home/ubuntu/.config/opencode" \
-  sndbx:opencode
-
-docker run --rm -it \
-  -v ".:/workspace" \
-  -v "$HOME/.codex:/home/ubuntu/.codex" \
-  sndbx:codex
-
-docker run --rm -it \
-  -p 127.0.0.1:3080:3080 \
-  -v ".:/workspace" \
-  -v "$HOME/.dsh:/home/ubuntu/.dsh" \
-  sndbx:dsh
 ```
+
+For other images, mount the config directory from the [table](#images) and add their flags from the [settings example](#configure).
 
 ## Test
 
 ```sh
-bundle install                                # once, installs minitest, rake and rubocop
-bundle exec rake                              # rustfmt, clippy, unit tests, rubocop, then every test
-bundle exec rake test                         # build, then every test
-bundle exec ruby test/completion_test.rb      # one file, against the last build
+bundle install                             # once
+bundle exec rake                           # rustfmt, clippy, unit tests, rubocop, then every test
+bundle exec ruby test/completion_test.rb   # one file, against the last build
 ```
 
-The tests are in Ruby, a file per command, plus `settings_test.rb` and `completion_test.rb`. They run `target/debug/sndbx`, or the binary `SNDBX_BIN` names, with a temporary `HOME` and a fake `docker` that records its arguments, so they need neither Docker nor existing settings. The completion tests call `_sndbx` in bash 4 or newer, like the completions themselves.
+The tests run `target/debug/sndbx` (or `$SNDBX_BIN`) with a temporary `HOME` and a fake `docker`, so they need neither Docker nor existing settings.
 
 ## License
 
