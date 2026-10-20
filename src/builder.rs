@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Context, bail};
 
 use crate::docker::{self, check_docker, image_exists};
-use crate::settings::{self, Settings};
+use crate::settings::{self, Added, Settings};
 use crate::{Result, print_line};
 
 pub const BASE_NAME: &str = "base";
@@ -38,7 +38,8 @@ impl Builder {
     }
 
     /// Builds base first if `rebuild_base` or an image needs it and it doesn't exist yet,
-    /// then each image in turn, stopping at the first that fails
+    /// then each image in turn, stopping at the first that fails, and adds each to the settings
+    /// so it runs right away
     pub fn build(&self, names: &[String], rebuild_base: bool) -> Result<()> {
         let known = self.image_names()?;
         let mut images: Vec<&str> = Vec::new();
@@ -62,7 +63,11 @@ impl Builder {
             self.docker_build(BASE_NAME)?;
         }
 
-        images.iter().try_for_each(|name| self.docker_build(name))
+        for name in images {
+            self.docker_build(name)?;
+            self.add_to_settings(name);
+        }
+        Ok(())
     }
 
     fn docker_build(&self, name: &str) -> Result<()> {
@@ -104,7 +109,28 @@ impl Builder {
     }
 
     fn tag_for(&self, name: &str) -> String {
-        format!("{}:{name}", self.tag_prefix)
+        settings::tag(&self.tag_prefix, name)
+    }
+
+    /// Adds a built image to the settings, only warning when it can't since the image was built
+    fn add_to_settings(&self, name: &str) {
+        let path = settings::path();
+        let hint = format!("set config_target there if {name} doesn't keep its config in ~/.{name}");
+        match settings::add_image(name) {
+            Ok(Added::Already) => {}
+            Ok(Added::OtherTag(tag)) => print_line(&format!(
+                "==> {name} in {} runs {tag}, not {}",
+                path.display(),
+                self.tag_for(name)
+            )),
+            Ok(Added::Appended) => print_line(&format!("==> Added {name} to {}, {hint}", path.display())),
+            Ok(Added::Created) => print_line(&format!("==> Created {} with {name}, {hint}", path.display())),
+            Err(e) => eprint!(
+                "Warning: can't add {name} to the settings: {e:#}.\nAdd it to the images in {}:\n  {}",
+                path.display(),
+                settings::entry_yaml(name)
+            ),
+        }
     }
 
     fn image_dir(&self, name: &str) -> PathBuf {

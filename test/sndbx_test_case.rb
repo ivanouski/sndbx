@@ -92,7 +92,7 @@ class SndbxTestCase < Minitest::Test
     write_dockerfile('base', "FROM ubuntu\n")
     write_dockerfile('claude', "ARG TAG_PREFIX=sndbx\nFROM ${TAG_PREFIX}:base\n")
     write_dockerfile('plain', "FROM ubuntu\n")
-    write_settings(images_dir: images_dir, images: [], **settings)
+    write_settings(images_dir: images_dir, **settings)
   end
 
   def write_exec_settings
@@ -113,6 +113,10 @@ class SndbxTestCase < Minitest::Test
 
   def add_docker_image(tag, user: 'ubuntu')
     File.write(@docker_images, "#{tag} #{user}\n", mode: 'a')
+  end
+
+  def configured_images
+    YAML.safe_load_file(settings_path)['images'].map { |image| image['name'] }
   end
 
   def docker_calls

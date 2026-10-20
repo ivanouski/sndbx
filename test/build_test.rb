@@ -136,6 +136,164 @@ class BuildTest < SndbxTestCase
                  sndbx('build', 'plain')
   end
 
+  def test_build_adds_the_image_to_the_settings
+    write_build_settings
+
+    result = sndbx('build', 'plain')
+
+    assert_predicate result, :success?
+    assert_includes result.out, "==> Added plain to #{settings_path}, " \
+                                "set config_target there if plain doesn't keep its config in ~/.plain\n"
+    assert_equal "plain\n", sndbx('list', 'configured').out
+  end
+
+  def test_build_adds_each_image
+    write_build_settings
+    add_docker_image('sndbx:base')
+
+    sndbx('build', 'plain', 'claude')
+
+    assert_equal %w[plain claude], configured_images
+  end
+
+  def test_build_appends_to_an_indented_list
+    content = "images_dir: #{@images_dir} # mine\nimages:\n  - name: codex\n    user: dev\n"
+    write_build_settings
+    write_settings_file(content)
+
+    sndbx('build', 'plain')
+
+    assert_equal "#{content}  - name: 'plain'\n", File.read(settings_path)
+  end
+
+  def test_build_appends_to_a_list_that_is_not_indented
+    write_build_settings(images: [{ name: 'codex' }])
+
+    sndbx('build', 'plain')
+
+    assert File.read(settings_path).end_with?("\n- name: 'plain'\n")
+    assert_equal %w[codex plain], configured_images
+  end
+
+  def test_build_appends_after_the_last_line_without_a_newline
+    content = "images_dir: #{@images_dir}\nimages:\n  - name: codex"
+    write_build_settings
+    write_settings_file(content)
+
+    sndbx('build', 'plain')
+
+    assert_equal "#{content}\n  - name: 'plain'\n", File.read(settings_path)
+  end
+
+  def test_build_quotes_the_name
+    write_build_settings
+    write_dockerfile('true', "FROM ubuntu\n")
+
+    sndbx('build', 'true')
+
+    assert_equal ['true'], configured_images
+  end
+
+  def test_build_keeps_a_configured_image
+    write_build_settings(images: [{ name: 'plain' }, { name: 'mine', tag: 'sndbx:claude' }])
+    add_docker_image('sndbx:base')
+    content = File.read(settings_path)
+
+    result = sndbx('build', 'plain', 'claude')
+
+    assert_predicate result, :success?
+    refute_includes result.out, 'Added'
+    assert_equal content, File.read(settings_path)
+  end
+
+  def test_build_tells_when_the_image_entry_runs_another_tag
+    write_build_settings(images: [{ name: 'plain', tag: 'my-plain:latest' }])
+    content = File.read(settings_path)
+
+    result = sndbx('build', 'plain')
+
+    assert_includes result.out, "==> plain in #{settings_path} runs my-plain:latest, not sndbx:plain\n"
+    assert_equal content, File.read(settings_path)
+  end
+
+  def test_build_appends_to_a_list_indented_by_four
+    content = "images_dir: #{@images_dir}\nimages:\n    - name: codex\n      docker_args:\n        - --init\n"
+    write_build_settings
+    write_settings_file(content)
+
+    sndbx('build', 'plain')
+
+    assert_equal "#{content}    - name: 'plain'\n", File.read(settings_path)
+  end
+
+  def test_build_does_not_add_an_image_that_failed
+    write_build_settings
+    add_docker_image('sndbx:base')
+
+    sndbx('build', 'plain', 'claude', env: { 'DOCKER_BROKEN' => 'sndbx:claude' })
+
+    assert_equal %w[plain], configured_images
+  end
+
+  def test_build_creates_the_example_settings_with_the_image
+    add_docker_image('sndbx:base')
+
+    result = sndbx('build', 'codex')
+
+    assert_predicate result, :success?
+    assert_includes result.out, "==> Created #{settings_path} with codex, "
+    assert_equal %w[claude codex], configured_images
+    assert_equal ['--security-opt=no-new-privileges', '--pids-limit=4096'],
+                 YAML.safe_load_file(settings_path)['docker_args']
+  end
+
+  def test_build_creates_the_example_settings_that_have_the_image
+    add_docker_image('sndbx:base')
+
+    sndbx('build', 'claude')
+
+    assert_equal %w[claude], configured_images
+  end
+
+  def test_build_warns_when_it_cannot_tell_where_to_add_the_image
+    content = "images_dir: #{@images_dir}\nimages: []\n"
+    write_build_settings
+    write_settings_file(content)
+
+    result = sndbx('build', 'plain')
+
+    assert_predicate result, :success?
+    assert_equal "Warning: can't add plain to the settings: " \
+                 "can't tell where the images list in #{settings_path} ends.\n" \
+                 "Add it to the images in #{settings_path}:\n  - name: 'plain'\n",
+                 result.err
+    assert_equal content, File.read(settings_path)
+  end
+
+  def test_build_warns_when_it_cannot_write_the_settings
+    skip 'root writes read-only files' if Process.uid.zero?
+    write_build_settings
+    File.chmod(0o444, settings_path)
+
+    result = sndbx('build', 'plain')
+
+    assert_predicate result, :success?
+    assert result.err.start_with?("Warning: can't add plain to the settings: can't write #{settings_path}: "),
+           result.err
+  end
+
+  def test_build_writes_through_a_symlinked_settings_file
+    write_build_settings
+    target = File.join(@root, 'dotfiles-settings.yml')
+    File.rename(settings_path, target)
+    File.symlink(target, settings_path)
+
+    sndbx('build', 'plain')
+
+    assert File.symlink?(settings_path)
+    assert_equal %w[plain], configured_images
+  end
+
   def test_build_needs_an_image_or_rebuild_base
     write_build_settings
 

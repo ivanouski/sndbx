@@ -31,6 +31,8 @@ sndbx list buildable                  # print the images build accepts
 
 `sndbx build claude` won't rebuild an existing `sndbx:base`. To pick up base changes, add `--rebuild-base` (`-b`).
 
+After building an image that isn't in the [settings](#configure) yet, `sndbx build` adds `- name: '<image>'` to the end of the settings file's `images`, or creates the example settings with it, so `sndbx run <image>` works right away. It appends to the file and leaves the rest as written. It mounts the config directory at `~/.<image>` in the sandbox, so set `config_target` if the agent keeps its config elsewhere. When the file's `images` isn't a block list at its end, or the file can't be written, it prints the entry to add instead.
+
 `sndbx` finds `images/` in the repo it was built from, wherever the binary is. If the repo moves, or the binary was built in another checkout or container, set `images_dir` in the [settings](#configure).
 
 To add an image, create `images/<name>/Dockerfile` starting with:

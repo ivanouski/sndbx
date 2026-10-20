@@ -1,7 +1,9 @@
 use std::fmt;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, bail};
+use anyhow::{Context, anyhow, bail};
 use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
@@ -48,7 +50,7 @@ pub struct Image {
 }
 
 /// The settings file as written, an unknown key is an error, likely a misspelled one
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, Clone, PartialEq, Debug)]
 #[serde(default, deny_unknown_fields, expecting = "a mapping with an images list")]
 struct File {
     #[serde(deserialize_with = "optional_text")]
@@ -61,7 +63,7 @@ struct File {
     images: Option<Vec<Entry>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default, Clone, PartialEq, Debug)]
 #[serde(deny_unknown_fields, expecting = "a mapping with a name")]
 struct Entry {
     #[serde(deserialize_with = "text")]
@@ -78,6 +80,18 @@ struct Entry {
     ports: Vec<String>,
     #[serde(default, deserialize_with = "strings")]
     docker_args: Vec<String>,
+}
+
+/// What `add_image` did
+pub enum Added {
+    /// An entry already runs the image
+    Already,
+    /// The image's entry runs another tag, this one
+    OtherTag(String),
+    /// Added an entry to the end of the settings file
+    Appended,
+    /// Created the settings file, the example with an entry for the image
+    Created,
 }
 
 /// The settings file, or the defaults where it has none
@@ -130,10 +144,7 @@ impl Settings {
 
         Ok(Image {
             name: name.to_string(),
-            tag: entry
-                .tag
-                .clone()
-                .unwrap_or_else(|| format!("{}:{name}", self.tag_prefix())),
+            tag: self.entry_tag(entry),
             config_dir: expand_path(config_dir, Some(&dir())),
             user: entry.user.clone(),
             config_target,
@@ -147,6 +158,11 @@ impl Settings {
                 .cloned()
                 .collect(),
         })
+    }
+
+    /// The tag the entry runs, its own or its name's default one
+    fn entry_tag(&self, entry: &Entry) -> String {
+        entry.tag.clone().unwrap_or_else(|| tag(self.tag_prefix(), &entry.name))
     }
 
     pub fn image_names(&self) -> Vec<String> {
@@ -173,7 +189,12 @@ impl Settings {
 /// Reads and validates the settings file
 fn read(path: &Path) -> Result<Settings> {
     let content = std::fs::read_to_string(path).with_context(|| format!("can't read {}", path.display()))?;
-    let file = parse(&content).with_context(|| format!("invalid {}", path.display()))?;
+    validate(&content, path)
+}
+
+/// The settings in `content`, read from `path`
+fn validate(content: &str, path: &Path) -> Result<Settings> {
+    let file = parse(content).with_context(|| format!("invalid {}", path.display()))?;
 
     if file
         .tag_prefix
@@ -187,6 +208,11 @@ fn read(path: &Path) -> Result<Settings> {
     }
 
     Ok(Settings { file })
+}
+
+/// The default tag of an image, `<tag_prefix>:<name>`
+pub fn tag(tag_prefix: &str, name: &str) -> String {
+    format!("{tag_prefix}:{name}")
 }
 
 /// The first document, empty settings when there's none or it's empty
@@ -205,9 +231,96 @@ fn is_valid_tag_prefix(prefix: &str) -> bool {
 }
 
 fn create_example(path: &Path) -> Result<()> {
+    create(path, EXAMPLE)
+}
+
+fn create(path: &Path, content: &str) -> Result<()> {
     std::fs::create_dir_all(dir())
-        .and_then(|()| std::fs::write(path, EXAMPLE))
+        .and_then(|()| std::fs::write(path, content))
         .with_context(|| format!("can't create {}", path.display()))
+}
+
+/// Adds an entry for the image to the settings unless one has it already, appending it to the settings file
+/// so the rest of the file stays as written, or creating the example with it when there's no settings file
+pub fn add_image(name: &str) -> Result<Added> {
+    let path = path();
+    let exists = path.exists();
+    let content = if exists {
+        std::fs::read_to_string(&path).with_context(|| format!("can't read {}", path.display()))?
+    } else {
+        EXAMPLE.to_string()
+    };
+    let settings = validate(&content, &path)?;
+
+    let tag = tag(settings.tag_prefix(), name);
+    let images = settings.images();
+    let added = if images.iter().any(|entry| settings.entry_tag(entry) == tag) {
+        Added::Already
+    } else if let Some(entry) = images.iter().find(|entry| entry.name == name) {
+        Added::OtherTag(settings.entry_tag(entry))
+    } else {
+        Added::Appended
+    };
+
+    let addition = match added {
+        Added::Appended => addition(&settings.file, &content, name)
+            .ok_or_else(|| anyhow!("can't tell where the images list in {} ends", path.display()))?,
+        _ => String::new(),
+    };
+    if !exists {
+        create(&path, &format!("{content}{addition}"))?;
+        return Ok(Added::Created);
+    }
+    if !addition.is_empty() {
+        // Appending writes through a symlink and keeps the file's permissions, unlike replacing the file
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| file.write_all(addition.as_bytes()))
+            .with_context(|| format!("can't write {}", path.display()))?;
+    }
+    Ok(added)
+}
+
+/// An entry for the image as YAML, a list item at the start of the line
+pub fn entry_yaml(name: &str) -> String {
+    // Quoted, a name like `true` or `123` would be a bool or a number otherwise
+    format!("- name: '{}'\n", name.replace('\'', "''"))
+}
+
+/// The text to append to `content` that adds an entry for the image to the images list and changes nothing else:
+/// the entry indented like a list item in the file, the last first, or by 2 or none, or under a new `images` key.
+/// `None` when none does, like for a flow list `[...]`, an `images` key before others, or a second document.
+fn addition(file: &File, content: &str, name: &str) -> Option<String> {
+    let mut expected = file.clone();
+    expected.images.get_or_insert_default().push(Entry {
+        name: name.to_string(),
+        ..Entry::default()
+    });
+
+    let newline = if content.is_empty() || content.ends_with('\n') {
+        ""
+    } else {
+        "\n"
+    };
+    let entry = entry_yaml(name);
+    let list_indents = content.lines().rev().filter_map(|line| {
+        let item = line.trim_start_matches(' ');
+        (item == "-" || item.starts_with("- ")).then_some(line.len() - item.len())
+    });
+    let mut candidates: Vec<String> = Vec::new();
+    for indent in list_indents.chain([2, 0]) {
+        let candidate = format!("{}{entry}", " ".repeat(indent));
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    }
+    candidates.push(format!("images:\n  {entry}"));
+
+    candidates
+        .into_iter()
+        .map(|candidate| format!("{newline}{candidate}"))
+        .find(|addition| parse(&format!("{content}{addition}")).is_ok_and(|parsed| parsed == expected))
 }
 
 /// A YAML string; `serde_norway` would also turn numbers and booleans into a `String`
@@ -276,6 +389,49 @@ fn strings<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D:
 mod tests {
     use super::*;
 
+    fn added(content: &str, name: &str) -> Option<String> {
+        addition(&parse(content).unwrap(), content, name).map(|addition| format!("{content}{addition}"))
+    }
+
+    #[test]
+    fn appends_to_the_images_list() {
+        assert_eq!(
+            added("images:\n  - name: a\n", "b").unwrap(),
+            "images:\n  - name: a\n  - name: 'b'\n"
+        );
+        assert_eq!(
+            added("images:\n- name: a\n  user: x", "b").unwrap(),
+            "images:\n- name: a\n  user: x\n- name: 'b'\n"
+        );
+        assert_eq!(
+            added("tag_prefix: x\n", "b").unwrap(),
+            "tag_prefix: x\nimages:\n  - name: 'b'\n"
+        );
+        assert_eq!(
+            added("images:\n    - name: a\n      docker_args:\n        - x\n", "b").unwrap(),
+            "images:\n    - name: a\n      docker_args:\n        - x\n    - name: 'b'\n"
+        );
+        assert_eq!(added("", "b").unwrap(), "images:\n  - name: 'b'\n");
+        assert_eq!(added("images: []\n# a\n", "b"), None);
+        assert_eq!(added("images:\n  - name: a\ndocker_args:\n  - x\n", "b"), None);
+        assert_eq!(added("images: ~\n", "b"), None);
+        assert_eq!(added("images:\n  - name: a\n---\nx: 1\n", "b"), None);
+    }
+
+    #[test]
+    fn appends_to_the_example() {
+        let example = added(EXAMPLE, "b").unwrap();
+        assert!(example.ends_with("\n  - name: 'b'\n"), "{example}");
+    }
+
+    #[test]
+    fn quotes_names() {
+        for name in ["true", "123", "null", "it's"] {
+            let content = added("images:\n  - name: a\n", name).unwrap();
+            assert_eq!(parse(&content).unwrap().images.unwrap()[1].name, name);
+        }
+    }
+
     #[test]
     fn tag_prefixes() {
         for valid in ["sndbx", "my.org/sndbx", "a-b_c", "x1"] {
@@ -305,13 +461,7 @@ mod tests {
 
     #[test]
     fn only_the_first_document() {
-        assert!(
-            parse("images: []\n---\nimages: 1\n")
-                .unwrap()
-                .images
-                .unwrap()
-                .is_empty()
-        );
+        assert_eq!(parse("images: []\n---\nimages: 1\n").unwrap().images, Some(vec![]));
     }
 
     #[test]
