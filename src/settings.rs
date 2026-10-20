@@ -27,7 +27,7 @@ images:
 ";
 
 pub fn dir() -> PathBuf {
-    paths::home().join(".config/sndbx")
+    paths::xdg_dir("XDG_CONFIG_HOME", ".config").join("sndbx")
 }
 
 pub fn path() -> PathBuf {
@@ -43,9 +43,9 @@ pub struct Image {
     pub docker_args: Vec<String>,
 }
 
-/// The settings file as written, unknown keys are ignored
+/// The settings file as written, an unknown key is an error, likely a misspelled one
 #[derive(Deserialize, Default)]
-#[serde(default, expecting = "a mapping with an images list")]
+#[serde(default, deny_unknown_fields, expecting = "a mapping with an images list")]
 struct File {
     #[serde(deserialize_with = "optional_text")]
     tag_prefix: Option<String>,
@@ -55,7 +55,7 @@ struct File {
 }
 
 #[derive(Deserialize)]
-#[serde(expecting = "a mapping with a name")]
+#[serde(deny_unknown_fields, expecting = "a mapping with a name")]
 struct Entry {
     #[serde(deserialize_with = "text")]
     name: String,
@@ -305,13 +305,24 @@ mod tests {
 
     #[test]
     fn strings_and_lists() {
-        let image = parse("images:\n  - name: a\n    ports: '3000'\n    docker_args: [x, y]\n    z: 1\n")
+        let image = parse("images:\n  - name: a\n    ports: '3000'\n    docker_args: [x, y]\n")
             .unwrap()
             .images
             .unwrap()
             .remove(0);
         assert_eq!(image.ports, ["3000"]);
         assert_eq!(image.docker_args, ["x", "y"]);
+    }
+
+    #[test]
+    fn unknown_keys() {
+        let message = parse("image: []\n").err().unwrap().to_string();
+        assert!(message.contains("unknown field `image`"), "{message}");
+        let message = parse("images:\n  - name: a\n    port: '3000'\n")
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(message.contains("images[0]: unknown field `port`"), "{message}");
     }
 
     #[test]

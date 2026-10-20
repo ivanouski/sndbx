@@ -13,7 +13,7 @@ const DOCKER: &str = "docker";
 pub const IMAGE_LABEL: &str = "sndbx.image";
 
 pub fn log_path() -> PathBuf {
-    paths::home().join(".local/state/sndbx/sndbx.log")
+    paths::xdg_dir("XDG_STATE_HOME", ".local/state").join("sndbx/sndbx.log")
 }
 
 pub fn check_docker() -> Result<()> {

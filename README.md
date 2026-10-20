@@ -50,7 +50,7 @@ FROM ${TAG_PREFIX}:base
 - publishes the image's `ports` plus each `-p PORT`
 - passes the image's `docker_args` plus everything after `--` to `docker run`
 - labels the container `sndbx.image=<name>`, which `sndbx exec` and `sndbx resume` find it by
-- logs each `docker run`, `exec`, `start` and `build` it runs to `~/.local/state/sndbx/sndbx.log`, which `sndbx logs` follows
+- logs each `docker run`, `exec`, `start` and `build` it runs to `~/.local/state/sndbx/sndbx.log` (or under `$XDG_STATE_HOME`), which `sndbx logs` follows
 
 ### Install
 
@@ -65,7 +65,7 @@ The completions complete arguments after `--` with docker's own completion, `doc
 
 ### Configure
 
-Images are listed in `~/.config/sndbx/settings.yml`. The first run creates an example to edit.
+Images are listed in `~/.config/sndbx/settings.yml`, or `$XDG_CONFIG_HOME/sndbx/settings.yml` when `XDG_CONFIG_HOME` is set, which also moves the default `config_dir`s and where relative paths resolve. The first run creates an example to edit. An unknown key is an error, so a misspelled one like `docker_arg` doesn't go unnoticed.
 
 ```yaml
 tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
@@ -143,12 +143,13 @@ docker run --rm -it \
 ## Test
 
 ```sh
-rake                              # rustfmt, clippy, unit tests, rubocop, then every test
-rake test                         # build, then every test
-ruby test/completion_test.rb      # one file, against the last build
+bundle install                                # once, installs minitest, rake and rubocop
+bundle exec rake                              # rustfmt, clippy, unit tests, rubocop, then every test
+bundle exec rake test                         # build, then every test
+bundle exec ruby test/completion_test.rb      # one file, against the last build
 ```
 
-The tests are in Ruby. They run `target/debug/sndbx`, or the binary `SNDBX_BIN` names, with a temporary `HOME` and a fake `docker` that records its arguments, so they need neither Docker nor existing settings. The completion tests call `_sndbx` in bash 4 or newer, like the completions themselves.
+The tests are in Ruby, a file per command, plus `settings_test.rb` and `completion_test.rb`. They run `target/debug/sndbx`, or the binary `SNDBX_BIN` names, with a temporary `HOME` and a fake `docker` that records its arguments, so they need neither Docker nor existing settings. The completion tests call `_sndbx` in bash 4 or newer, like the completions themselves.
 
 ## License
 

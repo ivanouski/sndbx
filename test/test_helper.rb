@@ -12,6 +12,9 @@ module SndbxTestHelper
   # The binary to test, the debug build unless SNDBX_BIN names another, e.g. a release build
   COMMAND = [File.expand_path(ENV.fetch('SNDBX_BIN', '../target/debug/sndbx'), __dir__)].freeze
 
+  # Unset, the host's would take sndbx's settings and log out of the temporary HOME
+  XDG_ENV = { 'XDG_CONFIG_HOME' => nil, 'XDG_STATE_HOME' => nil }.freeze
+
   Result = Struct.new(:out, :err, :status) do
     def success?
       status.success?
@@ -34,7 +37,7 @@ module SndbxTestHelper
 
   # Without CLICOLOR_FORCE, which would color clap's errors
   def sndbx(*args, env: {})
-    env = { 'HOME' => @home, 'PATH' => @bin, 'CLICOLOR_FORCE' => nil }.merge(env)
+    env = { 'HOME' => @home, 'PATH' => @bin, 'CLICOLOR_FORCE' => nil, **XDG_ENV }.merge(env)
     Result.new(*Open3.capture3(env, *COMMAND, *args, chdir: @work))
   end
 

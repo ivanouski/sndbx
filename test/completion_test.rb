@@ -309,7 +309,7 @@ class CompletionTest < Minitest::Test
   def complete(*words)
     env = { 'HOME' => @home, 'PATH' => "#{@bin}:#{ENV.fetch('PATH')}", 'COMPLETION' => COMPLETION,
             'DOCKER_LOG' => @docker_log, 'DOCKER_COMPLETIONS' => @docker_completions,
-            'DOCKER_CONTAINERS' => @docker_containers }
+            'DOCKER_CONTAINERS' => @docker_containers, **XDG_ENV }
     out, status = Open3.capture2(env, 'bash', '-c', COMPLETE, 'bash', *words, chdir: @work)
     assert_predicate status, :success?
 

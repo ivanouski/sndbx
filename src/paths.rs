@@ -8,6 +8,14 @@ pub fn home() -> PathBuf {
     std::env::home_dir().unwrap_or_default()
 }
 
+/// `$variable` when it's an absolute path, `~/fallback` otherwise, as the XDG Base Directory spec says
+pub fn xdg_dir(variable: &str, fallback: &str) -> PathBuf {
+    std::env::var_os(variable)
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .unwrap_or_else(|| home().join(fallback))
+}
+
 pub fn current_dir() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
 }

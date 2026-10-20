@@ -1,6 +1,8 @@
 AllCops:
   NewCops: enable
+  SuggestExtensions: false
   Include:
+    - Gemfile
     - Rakefile
     - test/**/*.rb
 

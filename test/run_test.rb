@@ -1,0 +1,327 @@
+# frozen_string_literal: true
+
+require_relative 'sndbx_test_case'
+
+class RunTest < SndbxTestCase
+  def test_run_mounts_the_current_directory
+    write_claude_settings
+
+    result = sndbx('run', 'claude')
+
+    assert_predicate result, :success?
+    assert_equal [*run_options('project'), *volume('project'), *config_volume, 'sndbx:claude'], docker_calls.last
+    assert File.directory?(default_config_dir)
+  end
+
+  def test_run_checks_docker_before_running
+    write_claude_settings
+
+    sndbx('run', 'claude')
+
+    assert_equal [['info'], ['image', 'inspect', 'sndbx:claude']], docker_calls.first(2)
+  end
+
+  def test_run_with_volumes_starts_in_the_last_one
+    write_claude_settings
+    api = mkdir('work/api')
+    web = mkdir('work/web')
+
+    sndbx('run', 'claude', '-v', api, '-v', web)
+
+    assert_equal [*run_options('web'), *volume('api', api), *volume('web', web), *config_volume, 'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_run_with_relative_volume
+    write_claude_settings
+    api = mkdir('work/api')
+
+    sndbx('run', 'claude', '-v', '../api')
+
+    assert_equal [*run_options('api'), *volume('api', api), *config_volume, 'sndbx:claude'], docker_calls.last
+  end
+
+  def test_run_with_workdir
+    write_claude_settings
+    api = mkdir('work/api')
+    web = mkdir('work/web')
+
+    sndbx('run', 'claude', '-v', api, '-v', web, '-w', 'api')
+
+    assert_includes docker_calls.last, '--workdir=/workspace/api'
+  end
+
+  def test_workdir_must_be_a_volume
+    write_claude_settings
+
+    assert_error "workdir 'api' is not a directory volume, expected one of: project",
+                 sndbx('run', 'claude', '-w', 'api')
+  end
+
+  def test_run_with_volume_target_and_options_keeps_the_current_directory
+    write_claude_settings
+    sdk = mkdir('work/garmin/sdk')
+
+    sndbx('run', 'claude', '-v', '../garmin/sdk:/opt/garmin/sdk:ro')
+
+    assert_equal [*run_options('project'), *volume('project'), '-v', "#{sdk}:/opt/garmin/sdk:ro", *config_volume,
+                  'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_run_with_volume_target_in_the_workspace_replaces_the_current_directory
+    write_claude_settings
+    api = mkdir('work/api')
+
+    sndbx('run', 'claude', '-v', "#{api}:/workspace/backend/")
+
+    assert_equal [*run_options('backend'), *volume('backend', api), *config_volume, 'sndbx:claude'], docker_calls.last
+  end
+
+  def test_run_with_file_volume
+    write_claude_settings
+    gitconfig = File.join(@home, '.gitconfig')
+    File.write(gitconfig, '')
+
+    sndbx('run', 'claude', '-v', '~/.gitconfig:/home/ubuntu/.gitconfig:ro')
+
+    assert_equal [*run_options('project'), *volume('project'), '-v', "#{gitconfig}:/home/ubuntu/.gitconfig:ro",
+                  *config_volume, 'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_run_with_absolute_workdir
+    write_claude_settings
+    sdk = mkdir('work/sdk')
+
+    sndbx('run', 'claude', '-v', "#{sdk}:/opt/sdk", '-w', '/opt/sdk')
+
+    assert_includes docker_calls.last, '--workdir=/opt/sdk'
+  end
+
+  def test_workdir_must_be_a_directory_volume
+    write_claude_settings
+    File.write(File.join(@work, 'notes.txt'), '')
+
+    assert_error "workdir '/notes.txt' is not a directory volume, expected one of: project",
+                 sndbx('run', 'claude', '-v', 'notes.txt:/notes.txt', '-w', '/notes.txt')
+  end
+
+  def test_run_with_volume_at_the_workspace_root
+    write_claude_settings
+    api = mkdir('work/api')
+
+    sndbx('run', 'claude', '-v', "#{api}:/workspace", '-v', '.:/opt/project')
+
+    assert_equal ['run', '--rm', '-it', '--label=sndbx.image=claude', '--workdir=/workspace',
+                  '-v', "#{api}:/workspace", '-v', "#{@work}:/opt/project", *config_volume, 'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_workdir_at_the_workspace_root
+    write_claude_settings
+
+    assert_error "workdir 'api' is not a directory volume, expected one of: /workspace",
+                 sndbx('run', 'claude', '-v', '.:/workspace', '-w', 'api')
+  end
+
+  def test_run_starts_in_a_directory_volume_outside_the_workspace_without_one_inside
+    write_claude_settings
+    sdk = mkdir('work/sdk')
+    File.write(File.join(@work, 'notes.txt'), '')
+
+    sndbx('run', 'claude', '-v', 'notes.txt:/workspace/notes.txt', '-v', "#{sdk}:/opt/sdk")
+
+    assert_includes docker_calls.last, '--workdir=/opt/sdk'
+  end
+
+  def test_run_needs_a_directory_volume
+    write_claude_settings
+    File.write(File.join(@work, 'notes.txt'), '')
+
+    assert_error 'no directory volume to start in', sndbx('run', 'claude', '-v', 'notes.txt:/workspace/notes.txt')
+  end
+
+  def test_volume_without_target_must_be_a_directory
+    write_claude_settings
+    File.write(File.join(@work, 'notes.txt'), '')
+
+    assert_error "#{File.join(@work, 'notes.txt')} is not a directory", sndbx('run', 'claude', '-v', 'notes.txt')
+  end
+
+  def test_volume_must_exist
+    write_claude_settings
+    missing = File.join(@root, 'missing')
+
+    assert_error "#{missing} does not exist", sndbx('run', 'claude', '-v', "#{missing}:/missing")
+  end
+
+  def test_volume_target_must_be_absolute
+    write_claude_settings
+
+    assert_error "invalid volume '.:workspace', DST must be an absolute path",
+                 sndbx('run', 'claude', '-v', '.:workspace')
+  end
+
+  def test_invalid_volume
+    write_claude_settings
+
+    assert_error "invalid volume '.:/a:ro:b', expected SRC[:DST[:OPTS]]", sndbx('run', 'claude', '-v', '.:/a:ro:b')
+    assert_error "invalid volume '.::ro', expected SRC[:DST[:OPTS]]", sndbx('run', 'claude', '-v', '.::ro')
+  end
+
+  def test_volume_targets_must_be_unique
+    write_claude_settings
+    first = mkdir('a/project')
+    second = mkdir('b/project')
+
+    assert_error 'more than one volume is mounted at /workspace/project',
+                 sndbx('run', 'claude', '-v', first, '-v', second)
+  end
+
+  def test_refuses_to_mount_home
+    write_claude_settings
+
+    assert_error "refusing to mount #{@home}", sndbx('run', 'claude', '-v', @home)
+  end
+
+  def test_refuses_to_mount_home_with_a_target
+    write_claude_settings
+
+    assert_error "refusing to mount #{@home}", sndbx('run', 'claude', '-v', '~:/home/ubuntu/host')
+  end
+
+  def test_refuses_to_mount_a_link_to_home
+    write_claude_settings
+    link = File.join(@root, 'link')
+    File.symlink(@home, link)
+
+    assert_error "refusing to mount #{link}", sndbx('run', 'claude', '-v', link)
+  end
+
+  def test_refuses_to_mount_root
+    write_claude_settings
+
+    assert_error 'refusing to mount /', sndbx('run', 'claude', '-v', '/')
+  end
+
+  def test_run_publishes_ports
+    write_settings(images: [{ name: 'claude', user: 'ubuntu', ports: ['127.0.0.1:3080:3080', '3000'] }])
+    add_docker_image('sndbx:claude')
+
+    sndbx('run', 'claude', '-p', '3000', '-p', '8080:80', '-p', '53/udp')
+
+    assert_equal [*run_options('project'), *volume('project'), *config_volume,
+                  '-p', '127.0.0.1:3080:3080', '-p', '3000:3000', '-p', '8080:80', '-p', '53:53/udp', 'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_run_keeps_the_container
+    write_claude_settings
+
+    sndbx('run', 'claude', '--keep')
+
+    assert_equal ['run', '-it', '--label=sndbx.image=claude', '--workdir=/workspace/project', *volume('project'),
+                  *config_volume, 'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_run_option_spellings
+    write_claude_settings
+    mkdir('work/project/-dir')
+
+    sndbx('run', '--kee', '-kp3000', '--publish=8080:80', '--pub', '53/udp', 'claude')
+    sndbx('run', 'claude', '-v', '-dir', '-w', 'nope', '--workdir', '-dir')
+
+    assert_equal [['run', '-it', '--label=sndbx.image=claude', '--workdir=/workspace/project', *volume('project'),
+                   *config_volume, '-p', '3000:3000', '-p', '8080:80', '-p', '53:53/udp', 'sndbx:claude'],
+                  [*run_options('-dir'), *volume('-dir', File.join(@work, '-dir')), *config_volume, 'sndbx:claude']],
+                 docker_runs
+  end
+
+  def test_invalid_port
+    write_claude_settings
+
+    assert_error "invalid port 'http', expected PORT or HOST:CONTAINER", sndbx('run', 'claude', '-p', 'http')
+  end
+
+  def test_run_uses_image_settings
+    write_settings(
+      tag_prefix: 'mine',
+      images: [{
+        name: 'claude',
+        user: 'dev',
+        config_dir: File.join(@root, 'claude-config'),
+        config_target: '.config/claude',
+        docker_args: ['--memory=8g', '--init']
+      }]
+    )
+    add_docker_image('mine:claude')
+
+    sndbx('run', 'claude')
+
+    assert_equal [*run_options('project'), *volume('project'),
+                  '-v', "#{File.join(@root, 'claude-config')}:/home/dev/.config/claude",
+                  '--memory=8g', '--init', 'mine:claude'],
+                 docker_calls.last
+  end
+
+  def test_run_passes_its_own_options_after_the_separator_to_docker
+    write_claude_settings
+
+    sndbx('run', 'claude', '--', '-v', '/tmp:/tmp', '-p', '3000', '-w', '/tmp')
+
+    assert_equal [*run_options('project'), *volume('project'), *config_volume,
+                  '-v', '/tmp:/tmp', '-p', '3000', '-w', '/tmp', 'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_run_passes_docker_args_after_the_image_ones
+    write_settings(images: [{ name: 'claude', user: 'ubuntu', docker_args: ['--memory=8g'] }])
+    add_docker_image('sndbx:claude')
+
+    sndbx('run', 'claude', '-v', '.', '--', '--memory=16g', '-e', 'FOO=bar')
+
+    assert_equal [*run_options('project'), *volume('project'), *config_volume,
+                  '--memory=8g', '--memory=16g', '-e', 'FOO=bar', 'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_run_takes_the_image_before_docker_args
+    write_claude_settings
+
+    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('run', '--', 'claude')
+  end
+
+  def test_run_uses_image_tag
+    write_settings(images: [{ name: 'claude', user: 'ubuntu', tag: 'my-claude:latest' }])
+    add_docker_image('my-claude:latest')
+
+    sndbx('run', 'claude')
+
+    assert_equal 'my-claude:latest', docker_calls.last.last
+  end
+
+  def test_run_without_docker
+    write_claude_settings
+
+    assert_error 'docker is not installed', sndbx('run', 'claude', docker: false)
+  end
+
+  def test_run_with_docker_stopped
+    write_claude_settings
+
+    assert_error 'docker is not running', sndbx('run', 'claude', env: { 'DOCKER_STOPPED' => '1' })
+  end
+
+  def test_run_with_missing_image
+    write_settings(images: [{ name: 'claude', user: 'ubuntu' }])
+
+    assert_error "docker image 'sndbx:claude' does not exist", sndbx('run', 'claude')
+  end
+
+  def test_run_needs_one_image
+    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('run')
+    assert_usage_error "unexpected argument 'codex' found", sndbx('run', 'claude', 'codex')
+  end
+end
