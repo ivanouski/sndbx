@@ -18,7 +18,45 @@ class RunTest < SndbxTestCase
 
     sndbx('run', 'claude')
 
-    assert_equal [['info'], ['image', 'inspect', 'sndbx:claude']], docker_calls.first(2)
+    assert_equal [['info'], ['image', 'inspect', '--format', '{{.Config.User}}', 'sndbx:claude']],
+                 docker_calls.first(2)
+  end
+
+  def test_run_mounts_the_config_in_the_home_of_the_user_the_image_runs_as
+    write_settings(images: [{ name: 'claude' }])
+    add_docker_image('sndbx:claude', user: 'dev:staff')
+
+    sndbx('run', 'claude')
+
+    assert_equal ['-v', "#{default_config_dir}:/home/dev/.claude"], docker_calls.last[-3..-2]
+  end
+
+  def test_run_mounts_the_config_in_root_home_for_an_image_that_runs_as_root
+    write_settings(images: [{ name: 'claude' }])
+    add_docker_image('sndbx:claude', user: '')
+
+    sndbx('run', 'claude')
+
+    assert_equal ['-v', "#{default_config_dir}:/root/.claude"], docker_calls.last[-3..-2]
+  end
+
+  def test_run_prefers_the_user_in_the_settings
+    write_settings(images: [{ name: 'claude', user: 'dev' }])
+    add_docker_image('sndbx:claude', user: 'ubuntu')
+
+    sndbx('run', 'claude')
+
+    assert_equal ['-v', "#{default_config_dir}:/home/dev/.claude"], docker_calls.last[-3..-2]
+  end
+
+  def test_run_with_an_image_that_runs_as_a_uid
+    write_settings(images: [{ name: 'claude' }])
+    add_docker_image('sndbx:claude', user: '1000:1000')
+
+    assert_error "can't tell the home of user '1000:1000' that image 'claude' runs as, " \
+                 "set user to its name in #{settings_path}",
+                 sndbx('run', 'claude')
+    assert_empty docker_runs
   end
 
   def test_run_with_volumes_starts_in_the_last_one

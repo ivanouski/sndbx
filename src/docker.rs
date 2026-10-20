@@ -28,6 +28,19 @@ pub fn image_exists(tag: &str) -> bool {
     run_quietly(&["image", "inspect", tag]) == Some(true)
 }
 
+/// The user the image runs as, like `ubuntu` or `1000:1000`, empty for root, `None` if the image doesn't exist
+pub fn image_user(tag: &str) -> Option<String> {
+    let output = Command::new(DOCKER)
+        .args(["image", "inspect", "--format", "{{.Config.User}}", tag])
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
 pub fn running_containers(image: &str) -> Result<Vec<String>> {
     containers(image, &[])
 }

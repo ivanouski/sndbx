@@ -5,10 +5,9 @@ use anyhow::{Context, bail};
 use serde::de::{self, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer};
 
-use crate::paths::{expand_path, join};
+use crate::paths::expand_path;
 use crate::{Abort, Result, paths};
 
-pub const HOME_ROOT: &str = "/home";
 const DEFAULT_TAG_PREFIX: &str = "sndbx";
 // The images directory of the repo this binary was built from
 const REPO_IMAGES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/images");
@@ -20,7 +19,7 @@ const EXAMPLE: &str = "\
 docker_args: ['--security-opt=no-new-privileges', '--pids-limit=4096']
 images:
   - name: claude
-    user: ubuntu
+    # user: ubuntu # optional, whose home config_target is in, defaults to the user the image runs as
     # tag: my-claude:latest # optional, defaults to <tag_prefix>:<name>
     # config_dir: ~/.claude_docker # optional, relative paths resolve against ~/.config/sndbx, defaults to ~/.config/sndbx/<name>
     # config_target: .claude # optional, relative to the user's home, defaults to .<name>
@@ -40,6 +39,9 @@ pub struct Image {
     pub name: String,
     pub tag: String,
     pub config_dir: PathBuf,
+    /// Overrides the user the image runs as, whose home `config_target` is in
+    pub user: Option<String>,
+    /// Relative to the user's home
     pub config_target: String,
     pub ports: Vec<String>,
     pub docker_args: Vec<String>,
@@ -116,14 +118,12 @@ impl Settings {
             );
         };
 
-        let settings_path = path();
-        let settings_path = settings_path.display();
-        let Some(user) = &entry.user else {
-            bail!("image '{name}' has no user in {settings_path}");
-        };
         let config_dir = match entry.config_dir.as_deref() {
             None => name,
-            Some("") => bail!("image '{name}' has a config_dir that isn't a path in {settings_path}"),
+            Some("") => bail!(
+                "image '{name}' has a config_dir that isn't a path in {}",
+                path().display()
+            ),
             Some(dir) => dir,
         };
         let config_target = entry.config_target.clone().unwrap_or_else(|| format!(".{name}"));
@@ -135,7 +135,8 @@ impl Settings {
                 .clone()
                 .unwrap_or_else(|| format!("{}:{name}", self.tag_prefix())),
             config_dir: expand_path(config_dir, Some(&dir())),
-            config_target: join(&[HOME_ROOT, user, &config_target]),
+            user: entry.user.clone(),
+            config_target,
             ports: entry.ports.clone(),
             // Later arguments win in docker, so the image's override the top-level ones
             docker_args: self

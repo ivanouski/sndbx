@@ -4,12 +4,14 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail};
 
-use crate::docker::{self, IMAGE_LABEL, check_docker, image_exists};
+use crate::docker::{self, IMAGE_LABEL, check_docker, image_user};
 use crate::paths::{expand_path, is_same_file, join, normalize};
-use crate::settings::Image;
+use crate::settings::{self, Image};
 use crate::{Result, paths};
 
 pub const MOUNT_ROOT: &str = "/workspace";
+const HOME_ROOT: &str = "/home";
+const ROOT_HOME: &str = "/root";
 
 pub struct Options {
     pub volumes: Vec<String>,
@@ -65,13 +67,13 @@ impl Sandbox {
 
     pub fn run(&self) -> Result<()> {
         check_docker()?;
-        self.check_image()?;
+        let config_target = self.config_target()?;
         let workdir = self.check_workdir()?;
         std::fs::create_dir_all(&self.image.config_dir)?;
 
         let label = format!("--label={IMAGE_LABEL}={}", self.image.name);
         let workdir_arg = format!("--workdir={workdir}");
-        let volumes = self.volume_specs();
+        let volumes = self.volume_specs(&config_target);
 
         let mut args = vec!["run"];
         if !self.keep {
@@ -91,7 +93,7 @@ impl Sandbox {
     }
 
     /// Each volume as docker's `SRC:DST[:OPTS]`, the image's config directory last
-    fn volume_specs(&self) -> Vec<String> {
+    fn volume_specs(&self, config_target: &str) -> Vec<String> {
         let mut specs: Vec<String> = self
             .volumes
             .iter()
@@ -100,19 +102,25 @@ impl Sandbox {
                 None => format!("{}:{}", volume.source.display(), volume.target),
             })
             .collect();
-        specs.push(format!(
-            "{}:{}",
-            self.image.config_dir.display(),
-            self.image.config_target
-        ));
+        specs.push(format!("{}:{config_target}", self.image.config_dir.display()));
         specs
     }
 
-    fn check_image(&self) -> Result<()> {
-        if image_exists(&self.image.tag) {
-            return Ok(());
-        }
-        bail!("docker image '{}' does not exist", self.image.tag)
+    /// Where the config directory is mounted, in the home of the user in the settings or else the image's,
+    /// which also checks that the image exists
+    fn config_target(&self) -> Result<String> {
+        let Some(image_user) = image_user(&self.image.tag) else {
+            bail!("docker image '{}' does not exist", self.image.tag);
+        };
+        let user = self.image.user.as_deref().unwrap_or(&image_user);
+        let Some(home) = home(user) else {
+            bail!(
+                "can't tell the home of user '{user}' that image '{}' runs as, set user to its name in {}",
+                self.image.name,
+                settings::path().display()
+            );
+        };
+        Ok(join(&[&home, &self.image.config_target]))
     }
 
     fn check_workdir(&self) -> Result<&str> {
@@ -132,6 +140,16 @@ impl Sandbox {
             workdir_name(workdir),
             names.join(", ")
         )
+    }
+}
+
+/// The home of `user`, a name or `name:group` like docker's `--user`, empty for root; `None` for a uid
+fn home(user: &str) -> Option<String> {
+    match user.split_once(':').map_or(user, |(name, _group)| name) {
+        // Empty is docker's default, 0 is root's uid
+        "" | "root" | "0" => Some(ROOT_HOME.to_string()),
+        uid if is_digits(uid) => None,
+        name => Some(join(&[HOME_ROOT, name])),
     }
 }
 
@@ -273,6 +291,19 @@ fn container_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn homes() {
+        assert_eq!(home("ubuntu").as_deref(), Some("/home/ubuntu"));
+        assert_eq!(home("dev:staff").as_deref(), Some("/home/dev"));
+        assert_eq!(home("dev:1000").as_deref(), Some("/home/dev"));
+        for root in ["", "root", "0", "root:root", "0:0"] {
+            assert_eq!(home(root).as_deref(), Some("/root"), "{root}");
+        }
+        for uid in ["1000", "1000:1000"] {
+            assert_eq!(home(uid), None, "{uid}");
+        }
+    }
 
     #[test]
     fn normalizes_ports() {

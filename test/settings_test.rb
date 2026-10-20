@@ -17,12 +17,6 @@ class SettingsTest < SndbxTestCase
     assert_error "unknown image 'nope', expected one of: claude, codex", sndbx('run', 'nope')
   end
 
-  def test_image_without_user
-    write_settings(images: [{ name: 'claude' }])
-
-    assert_error "image 'claude' has no user in #{settings_path}", sndbx('run', 'claude')
-  end
-
   def test_unquoted_port
     write_settings(images: [{ name: 'claude', user: 'ubuntu', ports: [3000] }])
 

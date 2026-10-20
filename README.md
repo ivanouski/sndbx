@@ -46,7 +46,7 @@ FROM ${TAG_PREFIX}:base
 
 - mounts each `-v SRC[:DST[:OPTS]]` like `docker run -v`, at `/workspace/<basename>` when there's no `DST`
 - mounts the current directory at `/workspace/<basename>` unless a volume is mounted in `/workspace`
-- mounts the image's config directory at `/home/<user>/<config_target>`
+- mounts the image's config directory at `/home/<user>/<config_target>`, where `<user>` is the one the image runs as, or `/root/<config_target>` for root
 - publishes the image's `ports` plus each `-p PORT`
 - passes the top-level `docker_args`, then the image's, then everything after `--` to `docker run`
 - labels the container `sndbx.image=<name>`, which `sndbx exec` and `sndbx resume` find it by
@@ -81,22 +81,21 @@ docker_args: ["--security-opt=no-new-privileges", "--pids-limit=4096"] # optiona
 images:
   - name: claude
     tag: my-claude:latest # optional, defaults to <tag_prefix>:<name>
-    user: ubuntu
+    user: ubuntu # optional, whose home config_target is in, defaults to the user the image runs as
     # config_dir: ~/.claude_docker # optional, relative paths resolve against ~/.config/sndbx, defaults to ~/.config/sndbx/<name>
     config_target: .claude # optional, relative to the user's home, defaults to .<name>
     docker_args: ["--memory=8g"] # optional, extra docker run arguments, after the top-level ones
   - name: opencode
-    user: ubuntu
     config_target: .config/opencode
     docker_args: ["--add-host=host.docker.internal:host-gateway"] # optional, lets the container reach Ollama on the host on Linux
   - name: codex
-    user: ubuntu
   - name: dsh
-    user: ubuntu
     ports: ["127.0.0.1:3080:3080"] # optional, always published; quote them
 ```
 
 `--security-opt=no-new-privileges` keeps processes in the sandbox from gaining privileges, through setuid binaries like `su` or file capabilities, so the agent stays the unprivileged user. `--pids-limit=4096` caps the processes and threads in the sandbox, so a fork bomb or a runaway script fails there instead of filling the host's process table. Threads count too, and Node, cargo and Chromium use many, so raise the limit if builds fail with "Resource temporarily unavailable"; `docker stats` shows the count. The example settings sndbx creates set both.
+
+sndbx reads the user from the image, `USER` in its Dockerfile, so `user` is only needed to override it, or when the image runs as a numeric uid, whose name sndbx can't tell.
 
 The top-level `docker_args` come first, so an image overrides a flag that takes one value, like `--pids-limit=8192` or `--memory`, with its own: docker takes the last. Flags that add up, like `--security-opt`, `--cap-add` or `-e`, add to the top-level ones.
 

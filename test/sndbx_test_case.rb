@@ -2,8 +2,8 @@
 
 require_relative 'test_helper'
 
-# Runs sndbx with a fake docker that records its arguments and knows the images and containers
-# the tests add
+# Runs sndbx with a fake docker that records its arguments and knows the images, the users they run as,
+# and the containers the tests add
 class SndbxTestCase < Minitest::Test
   include SndbxTestHelper
 
@@ -13,7 +13,7 @@ class SndbxTestCase < Minitest::Test
 
     File.write(ENV.fetch('DOCKER_LOG'), "\#{ARGV.to_json}\\n", mode: 'a')
     images_path = ENV.fetch('DOCKER_IMAGES')
-    images = File.exist?(images_path) ? File.readlines(images_path, chomp: true) : []
+    images = File.exist?(images_path) ? File.readlines(images_path, chomp: true).to_h { |line| [line[/\\S+/], line[/ (.*)/, 1].to_s] } : {}
     containers_path = ENV.fetch('DOCKER_CONTAINERS')
     containers = File.exist?(containers_path) ? File.readlines(containers_path, chomp: true).map(&:split) : []
 
@@ -21,7 +21,10 @@ class SndbxTestCase < Minitest::Test
     in ['info']
       exit(!ENV.key?('DOCKER_STOPPED'))
     in ['image', 'inspect', tag]
-      exit(images.include?(tag))
+      exit(images.key?(tag))
+    in ['image', 'inspect', '--format', '{{.Config.User}}', tag]
+      exit(false) unless images.key?(tag)
+      puts images[tag]
     in ['ps', *filters, '--format', '{{.Names}}']
       status = filters.include?('--all') ? filters.find { |arg| arg.start_with?('status=') }[7..] : 'running'
       containers.each do |image, name, state = 'running'|
@@ -81,7 +84,7 @@ class SndbxTestCase < Minitest::Test
   end
 
   def write_claude_settings
-    write_settings(images: [{ name: 'claude', user: 'ubuntu' }])
+    write_settings(images: [{ name: 'claude' }])
     add_docker_image('sndbx:claude')
   end
 
@@ -108,8 +111,8 @@ class SndbxTestCase < Minitest::Test
     File.write(@docker_containers, "#{image} #{name} #{state}\n", mode: 'a')
   end
 
-  def add_docker_image(tag)
-    File.write(@docker_images, "#{tag}\n", mode: 'a')
+  def add_docker_image(tag, user: 'ubuntu')
+    File.write(@docker_images, "#{tag} #{user}\n", mode: 'a')
   end
 
   def docker_calls
