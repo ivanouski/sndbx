@@ -8,12 +8,14 @@ Docker images for running coding agents in a sandbox, plus `sndbx`, a small wrap
 | ---------- | ------------------------------- | ----------------------------------------- |
 | `claude`   | `/home/ubuntu/.claude`          |                                           |
 | `opencode` | `/home/ubuntu/.config/opencode` | can use Ollama on the host, see below     |
-| `codex`    | `/home/ubuntu/.codex`           |                                           |
+| `codex`    | `/home/ubuntu/.codex`           | runs without its own sandbox, see below   |
 | `dsh`      | `/home/ubuntu/.dsh`             | web UI on port 3080, publish on 127.0.0.1 |
 
 All are built on `sndbx:base` (`images/base/`): Ubuntu with node, python, ruby, rust, uv and postgres via mise, and Playwright with headless Chromium.
 
 **opencode with Ollama:** `images/opencode/opencode/config.json` is an example config for Ollama on the host; copy it into opencode's config directory. The container reaches the host with `--add-host=host.docker.internal:host-gateway`, and on Linux Ollama must listen beyond loopback, e.g. `OLLAMA_HOST=0.0.0.0 ollama serve`.
+
+**codex** sandboxes its commands with bubblewrap, which needs user namespaces that docker's default seccomp profile blocks, so the image starts it with `--sandbox danger-full-access` and the container is the sandbox.
 
 **dsh** refuses to listen on a wildcard address, so the image binds the container's own address, which a published port reaches. Publish it on `127.0.0.1` only: a plain `-p 3080:3080` lets anyone on your network control the agent.
 

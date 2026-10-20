@@ -7,4 +7,5 @@ ENV CODEX_HOME=${HOME}/.codex
 
 WORKDIR /workspace
 
-CMD ["codex"]
+# The container is the sandbox: codex's own, bubblewrap, needs user namespaces, which docker's seccomp profile blocks
+CMD ["codex", "--sandbox", "danger-full-access"]
