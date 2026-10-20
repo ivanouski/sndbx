@@ -42,7 +42,7 @@ enum Commands {
         before_help = format!(
             "Runs a sandboxed image from {}.\n\
              Mounts the current directory unless a volume is mounted in {MOUNT_ROOT}.\n\
-             Passes DOCKER_ARGS to docker run after the image's docker_args.",
+             Passes DOCKER_ARGS to docker run after the docker_args in the settings.",
             settings::path().display()
         )
     )]

@@ -287,6 +287,31 @@ class RunTest < SndbxTestCase
                  docker_calls.last
   end
 
+  def test_run_passes_top_level_docker_args_before_the_image_ones
+    write_settings(
+      docker_args: ['--security-opt=no-new-privileges', '--pids-limit=4096'],
+      images: [{ name: 'claude', user: 'ubuntu', docker_args: ['--pids-limit=8192'] }]
+    )
+    add_docker_image('sndbx:claude')
+
+    sndbx('run', 'claude', '--', '--memory=16g')
+
+    assert_equal [*run_options('project'), *volume('project'), *config_volume,
+                  '--security-opt=no-new-privileges', '--pids-limit=4096', '--pids-limit=8192', '--memory=16g',
+                  'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_run_passes_top_level_docker_args_to_images_without_their_own
+    write_settings(docker_args: '--pids-limit=4096', images: [{ name: 'claude', user: 'ubuntu' }])
+    add_docker_image('sndbx:claude')
+
+    sndbx('run', 'claude')
+
+    assert_equal [*run_options('project'), *volume('project'), *config_volume, '--pids-limit=4096', 'sndbx:claude'],
+                 docker_calls.last
+  end
+
   def test_run_takes_the_image_before_docker_args
     write_claude_settings
 

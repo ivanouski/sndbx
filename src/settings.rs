@@ -15,6 +15,9 @@ const REPO_IMAGES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/images");
 
 const EXAMPLE: &str = "\
 # tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
+# images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to the sndbx repo's images/
+# optional, docker run arguments for every image, before the image's own; these two harden the sandbox, see the README
+docker_args: ['--security-opt=no-new-privileges', '--pids-limit=4096']
 images:
   - name: claude
     user: ubuntu
@@ -22,8 +25,7 @@ images:
     # config_dir: ~/.claude_docker # optional, relative paths resolve against ~/.config/sndbx, defaults to ~/.config/sndbx/<name>
     # config_target: .claude # optional, relative to the user's home, defaults to .<name>
     # ports: ['3000'] # optional, always published; quote them
-    # docker_args: ['--memory=8g'] # optional, extra docker run arguments
-# images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to the sndbx repo's images/
+    # docker_args: ['--memory=8g'] # optional, extra docker run arguments, after the top-level ones
 ";
 
 pub fn dir() -> PathBuf {
@@ -51,6 +53,9 @@ struct File {
     tag_prefix: Option<String>,
     #[serde(deserialize_with = "optional_text")]
     images_dir: Option<String>,
+    /// For every image, before the image's own
+    #[serde(deserialize_with = "strings")]
+    docker_args: Vec<String>,
     images: Option<Vec<Entry>>,
 }
 
@@ -132,7 +137,14 @@ impl Settings {
             config_dir: expand_path(config_dir, Some(&dir())),
             config_target: join(&[HOME_ROOT, user, &config_target]),
             ports: entry.ports.clone(),
-            docker_args: entry.docker_args.clone(),
+            // Later arguments win in docker, so the image's override the top-level ones
+            docker_args: self
+                .file
+                .docker_args
+                .iter()
+                .chain(&entry.docker_args)
+                .cloned()
+                .collect(),
         })
     }
 
@@ -276,6 +288,10 @@ mod tests {
     #[test]
     fn example_parses() {
         let example = parse(EXAMPLE).unwrap();
+        assert_eq!(
+            example.docker_args,
+            ["--security-opt=no-new-privileges", "--pids-limit=4096"]
+        );
         assert_eq!(example.images.unwrap()[0].name, "claude");
     }
 
@@ -334,6 +350,7 @@ mod tests {
             "images:\n  - name: a\n    config_dir: 42\n",
             "images:\n  - name: true\n",
             "tag_prefix: 1\n",
+            "docker_args: [8]\n",
         ] {
             let message = parse(invalid).err().unwrap().to_string();
             assert!(message.contains("expected a string"), "{invalid:?}: {message}");

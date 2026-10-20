@@ -161,10 +161,17 @@ class SettingsTest < SndbxTestCase
     assert_equal "claude\n", sndbx('list', 'configured', env: { 'XDG_CONFIG_HOME' => '' }).out
   end
 
+  def test_top_level_docker_args_must_be_strings
+    write_settings(docker_args: ['--pids-limit=4096', 8], images: [{ name: 'claude', user: 'ubuntu' }])
+
+    assert_settings_error 'docker_args[1]: invalid type: integer `8`, expected a string', sndbx('run', 'claude')
+  end
+
   def test_unknown_key
     write_settings(tag_prefx: 'mine', images: [])
 
-    assert_settings_error 'unknown field `tag_prefx`, expected one of `tag_prefix`, `images_dir`, `images`',
+    assert_settings_error 'unknown field `tag_prefx`, expected one of `tag_prefix`, `images_dir`, `docker_args`, ' \
+                          '`images`',
                           sndbx('list', 'configured')
   end
 

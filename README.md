@@ -48,20 +48,27 @@ FROM ${TAG_PREFIX}:base
 - mounts the current directory at `/workspace/<basename>` unless a volume is mounted in `/workspace`
 - mounts the image's config directory at `/home/<user>/<config_target>`
 - publishes the image's `ports` plus each `-p PORT`
-- passes the image's `docker_args` plus everything after `--` to `docker run`
+- passes the top-level `docker_args`, then the image's, then everything after `--` to `docker run`
 - labels the container `sndbx.image=<name>`, which `sndbx exec` and `sndbx resume` find it by
 - logs each `docker run`, `exec`, `start` and `build` it runs to `~/.local/state/sndbx/sndbx.log` (or under `$XDG_STATE_HOME`), which `sndbx logs` follows
 
 ### Install
 
-`sndbx` is written in Rust. Build and install it from the repo with [mise](https://mise.jdx.dev)'s Rust or any other recent toolchain, on the machine that runs it, and source the bash completions:
+`sndbx` is written in Rust. Build and install it into `~/.cargo/bin` from the repo with [mise](https://mise.jdx.dev)'s Rust or any other recent toolchain, on the machine that runs it:
 
 ```sh
-cargo install --path .                        # installs sndbx to ~/.cargo/bin
-source /path/to/sndbx/completions/_sndbx
+cargo install --path .
 ```
 
-The completions complete arguments after `--` with docker's own completion, `docker __complete run`, and fall back to file names when docker doesn't have it.
+Optionally, install the bash completion, it needs bash 4.0 or later. With bash-completion it loads on demand from:
+
+```sh
+cp completions/_sndbx ~/.local/share/bash-completion/completions/sndbx
+```
+
+Without bash-completion, source `completions/_sndbx` in `~/.bashrc` instead.
+
+The completion completes arguments after `--` with docker's own completion, `docker __complete run`, and falls back to file names when docker doesn't have it.
 
 ### Configure
 
@@ -70,13 +77,14 @@ Images are listed in `~/.config/sndbx/settings.yml`, or `$XDG_CONFIG_HOME/sndbx/
 ```yaml
 tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
 images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to the repo's images/; relative to ~/.config/sndbx
+docker_args: ["--security-opt=no-new-privileges", "--pids-limit=4096"] # optional, docker run arguments for every image
 images:
   - name: claude
     tag: my-claude:latest # optional, defaults to <tag_prefix>:<name>
     user: ubuntu
     # config_dir: ~/.claude_docker # optional, relative paths resolve against ~/.config/sndbx, defaults to ~/.config/sndbx/<name>
     config_target: .claude # optional, relative to the user's home, defaults to .<name>
-    docker_args: ["--memory=8g"] # optional, extra docker run arguments
+    docker_args: ["--memory=8g"] # optional, extra docker run arguments, after the top-level ones
   - name: opencode
     user: ubuntu
     config_target: .config/opencode
@@ -87,6 +95,10 @@ images:
     user: ubuntu
     ports: ["127.0.0.1:3080:3080"] # optional, always published; quote them
 ```
+
+`--security-opt=no-new-privileges` keeps processes in the sandbox from gaining privileges, through setuid binaries like `su` or file capabilities, so the agent stays the unprivileged user. `--pids-limit=4096` caps the processes and threads in the sandbox, so a fork bomb or a runaway script fails there instead of filling the host's process table. Threads count too, and Node, cargo and Chromium use many, so raise the limit if builds fail with "Resource temporarily unavailable"; `docker stats` shows the count. The example settings sndbx creates set both.
+
+The top-level `docker_args` come first, so an image overrides a flag that takes one value, like `--pids-limit=8192` or `--memory`, with its own: docker takes the last. Flags that add up, like `--security-opt`, `--cap-add` or `-e`, add to the top-level ones.
 
 ### Use
 
