@@ -1,11 +1,4 @@
-FROM ubuntu:26.10
-
-ARG USER=ubuntu
-ARG NODE_VERSION=26.9.0
-ARG PYTHON_VERSION=3.14.7
-ARG RUBY_VERSION=4.0.7
-ARG RUST_VERSION=1.99
-ARG POSTGRES_VERSION=18.6
+FROM ubuntu:26.10 AS system
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -23,6 +16,17 @@ RUN apt update && apt upgrade -y && apt install -y --no-install-recommends \
   unzip zip less file iproute2 wget ripgrep fd-find \
   && rm -rf /var/lib/apt/lists/* \
   && ln -s /usr/bin/fdfind /usr/local/bin/fd
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+
+FROM system AS tools
+
+ARG USER=ubuntu
+ARG NODE_VERSION=26.9.0
+ARG PYTHON_VERSION=3.14.7
+ARG RUBY_VERSION=4.0.7
+ARG RUST_VERSION=1.99
+ARG POSTGRES_VERSION=18.6
 
 USER ${USER}
 ENV HOME=/home/${USER}
@@ -46,7 +50,5 @@ RUN eval "$(~/.local/bin/mise activate bash)" \
   && npm cache clean --force
 
 ENV PATH=${HOME}/.local/bin:${HOME}/.local/share/mise/shims:$PATH
-
-ENTRYPOINT ["/usr/bin/tini", "--"]
 
 WORKDIR ${HOME}
