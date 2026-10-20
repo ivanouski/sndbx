@@ -1,8 +1,7 @@
 ARG TAG_PREFIX=sndbx
 FROM ${TAG_PREFIX}:base
 
-RUN npm install -g @openai/codex \
-  && ~/.local/bin/mise reshim
+RUN mise use --global codex@latest
 
 ENV CODEX_HOME=${HOME}/.codex
 

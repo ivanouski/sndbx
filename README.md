@@ -13,7 +13,7 @@ The host paths are the ones the `docker run` examples below mount. `sndbx` mount
 
 `images/opencode/opencode/config.json` is an example opencode config that uses Ollama running on the host. The image doesn't include it, so copy it into opencode's config directory on the host to use it. The examples below pass `--add-host=host.docker.internal:host-gateway` so the container can reach the host on Linux too, where Ollama must also listen beyond loopback, e.g. `OLLAMA_HOST=0.0.0.0 ollama serve`.
 
-All of them are built on `<tag_prefix>:base` (`sndbx:base` by default), the base image in `images/base/` (Ubuntu with node, ruby and python via mise, postgres and Playwright dependencies).
+All of them are built on `<tag_prefix>:base` (`sndbx:base` by default), the base image in `images/base/` (Ubuntu with node, python, ruby, rust, uv and postgres via mise, and Playwright with headless Chromium).
 
 dsh refuses to listen on a wildcard address such as `0.0.0.0` because it "would expose remote code execution to the network", so the `dsh` image binds the container's own address instead, which a published port reaches. Publish the port on `127.0.0.1` only, as the examples below do. A plain `-p 3080:3080` lets anyone on your network control the agent.
 
