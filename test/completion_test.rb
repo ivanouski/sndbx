@@ -157,11 +157,14 @@ class CompletionTest < Minitest::Test
   def test_build_images
     write_dockerfile('base', "FROM ubuntu\n")
     write_dockerfile('claude', "FROM ubuntu\n")
+    write_dockerfile('codex', "FROM ubuntu\n")
     write_settings(images_dir: @images_dir, images: [])
 
-    assert_equal %w[base claude], complete('build', '')
-    assert_empty complete('build', 'base', '')
-    assert_empty complete('build', '--all', '')
+    assert_equal %w[claude codex], complete('build', '')
+    assert_equal %w[codex], complete('build', 'claude', '')
+    assert_equal %w[claude], complete('build', '--rebuild-base', 'codex', '')
+    assert_empty complete('build', 'claude', 'codex', '')
+    assert_equal %w[--rebuild-base], complete('build', '--r')
   end
 
   def test_exec_images

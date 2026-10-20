@@ -19,16 +19,17 @@ dsh refuses to listen on a wildcard address such as `0.0.0.0` because it "would 
 
 ## Build
 
-`sndbx build IMAGE` builds `images/IMAGE/`, always with `--no-cache`. Every image is tagged `<tag_prefix>:<directory name>`, e.g. `sndbx:base`, `sndbx:claude`. The prefix is `sndbx` unless `tag_prefix` is set in the [settings](#configure).
+`sndbx build IMAGE...` builds each `images/IMAGE/` in turn, always with `--no-cache`. Every image is tagged `<tag_prefix>:<directory name>`, e.g. `sndbx:base`, `sndbx:claude`. The prefix is `sndbx` unless `tag_prefix` is set in the [settings](#configure).
 
 ```sh
-sndbx build claude    # build/rebuild sndbx:claude, and sndbx:base first if it doesn't exist yet
-sndbx build base      # build/rebuild sndbx:base
-sndbx build --all     # build/rebuild sndbx:base, then every other image
-sndbx list buildable  # print the images build accepts
+sndbx build claude                    # build/rebuild sndbx:claude, and sndbx:base first if it doesn't exist yet
+sndbx build claude codex              # build/rebuild sndbx:claude, then sndbx:codex
+sndbx build --rebuild-base claude dsh # build/rebuild sndbx:base, then sndbx:claude and sndbx:dsh
+sndbx build --rebuild-base            # build/rebuild sndbx:base only
+sndbx list buildable                  # print the images build accepts
 ```
 
-`sndbx build claude` won't rebuild an existing `sndbx:base`. To pick up base changes, run `sndbx build base` before it.
+`sndbx build claude` won't rebuild an existing `sndbx:base`. To pick up base changes, add `--rebuild-base` (`-b`).
 
 `sndbx` finds `images/` in the repo it was built from, wherever the binary is. If the repo moves, or the binary was built in another checkout or container, set `images_dir` in the [settings](#configure).
 

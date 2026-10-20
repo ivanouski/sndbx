@@ -59,7 +59,7 @@ class SndbxTest < Minitest::Test
   end
 
   def test_build_help
-    assert_help 'Usage: sndbx build IMAGE | --all', sndbx('build', '--help')
+    assert_help 'Usage: sndbx build [--rebuild-base] IMAGE...', sndbx('build', '--help')
   end
 
   def test_exec_help
@@ -561,13 +561,13 @@ class SndbxTest < Minitest::Test
     write_build_settings
     mkdir('images/not-an-image')
 
-    assert_equal "base\nclaude\nplain\n", sndbx('list', 'buildable').out
+    assert_equal "claude\nplain\n", sndbx('list', 'buildable').out
   end
 
   def test_list_buildable_defaults_to_the_repo_images
     result = sndbx('list', 'buildable')
 
-    assert_equal Dir.glob('*/Dockerfile', base: REPO_IMAGES_DIR).map { |path| File.dirname(path) }.sort,
+    assert_equal Dir.glob('*/Dockerfile', base: REPO_IMAGES_DIR).map { |path| File.dirname(path) }.sort - ['base'],
                  result.out.lines(chomp: true)
     refute File.exist?(settings_path)
   end
@@ -575,7 +575,7 @@ class SndbxTest < Minitest::Test
   def test_build_with_relative_images_dir
     write_build_settings(images_dir: '../../images', home: @root)
 
-    assert_equal "base\nclaude\nplain\n", sndbx('list', 'buildable', env: { 'HOME' => @root }).out
+    assert_equal "claude\nplain\n", sndbx('list', 'buildable', env: { 'HOME' => @root }).out
   end
 
   def test_build_builds_missing_base_first
@@ -604,24 +604,57 @@ class SndbxTest < Minitest::Test
     assert_equal [build_call('plain')], docker_builds
   end
 
-  def test_build_base
+  def test_build_images_in_order
     write_build_settings
     add_docker_image('sndbx:base')
 
-    sndbx('build', 'base')
+    sndbx('build', 'plain', 'claude', 'plain')
+
+    assert_equal [build_call('plain'), build_call('claude', base: true)], docker_builds
+  end
+
+  def test_build_builds_missing_base_once
+    write_build_settings
+    write_dockerfile('codex', "ARG TAG_PREFIX=sndbx\nFROM ${TAG_PREFIX}:base\n")
+
+    sndbx('build', 'plain', 'claude', 'codex')
+
+    assert_equal [build_call('base'), build_call('plain'), build_call('claude', base: true),
+                  build_call('codex', base: true)],
+                 docker_builds
+  end
+
+  def test_build_rebuilds_base_first
+    write_build_settings
+    add_docker_image('sndbx:base')
+
+    sndbx('build', '--rebuild-base', 'plain', 'claude')
+
+    assert_equal [build_call('base'), build_call('plain'), build_call('claude', base: true)], docker_builds
+  end
+
+  def test_build_rebuilds_only_base
+    write_build_settings
+    add_docker_image('sndbx:base')
+
+    sndbx('build', '-b')
 
     assert_equal [build_call('base')], docker_builds
   end
 
-  def test_build_all_builds_base_first
+  def test_build_without_base_dockerfile
     write_build_settings
-    write_dockerfile('alpine', "FROM alpine\n")
-    add_docker_image('sndbx:base')
+    File.delete(File.join(@images_dir, 'base', 'Dockerfile'))
 
-    sndbx('build', '--all')
+    assert_error "can't read #{File.join(@images_dir, 'base', 'Dockerfile')}: No such file or directory (os error 2)",
+                 sndbx('build', '-b')
+  end
 
-    assert_equal [build_call('base'), build_call('alpine'), build_call('claude', base: true), build_call('plain')],
-                 docker_builds
+  def test_build_rejects_base
+    write_build_settings
+
+    assert_error 'base is built with --rebuild-base', sndbx('build', 'claude', 'base')
+    refute File.exist?(@docker_log)
   end
 
   def test_build_uses_tag_prefix
@@ -635,7 +668,8 @@ class SndbxTest < Minitest::Test
   def test_build_unknown_image
     write_build_settings
 
-    assert_error "unknown image 'nope', expected one of: base, claude, plain", sndbx('build', 'nope')
+    assert_error "unknown image 'nope', expected one of: claude, plain", sndbx('build', 'plain', 'nope')
+    refute File.exist?(@docker_log)
   end
 
   def test_build_failure
@@ -647,10 +681,20 @@ class SndbxTest < Minitest::Test
     assert_equal [build_call('base')], docker_builds
   end
 
+  def test_build_stops_at_the_first_failure
+    write_build_settings
+    add_docker_image('sndbx:base')
+
+    result = sndbx('build', 'plain', 'claude', env: { 'DOCKER_BROKEN' => 'sndbx:plain' })
+
+    assert_error 'failed to build sndbx:plain', result
+    assert_equal [build_call('plain')], docker_builds
+  end
+
   def test_build_without_docker
     write_build_settings
 
-    assert_error 'docker is not installed', sndbx('build', 'base', docker: false)
+    assert_error 'docker is not installed', sndbx('build', 'plain', docker: false)
   end
 
   def test_build_with_missing_images_dir
@@ -658,15 +702,13 @@ class SndbxTest < Minitest::Test
     write_settings(images_dir: missing, images: [])
 
     assert_error "images directory #{missing} does not exist, set images_dir in #{settings_path}",
-                 sndbx('build', 'base')
+                 sndbx('build', 'plain')
   end
 
-  def test_build_needs_one_image_or_all
+  def test_build_needs_an_image_or_rebuild_base
     write_build_settings
 
-    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('build')
-    assert_usage_error "unexpected argument 'plain' found", sndbx('build', 'base', 'plain')
-    assert_usage_error "the argument '--all' cannot be used with '[IMAGE]'", sndbx('build', '--all', 'base')
+    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>...", sndbx('build')
   end
 
   def test_exec

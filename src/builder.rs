@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 
 use crate::docker::{self, check_docker, image_exists};
 use crate::settings::{self, Settings};
@@ -22,47 +22,47 @@ impl Builder {
         }
     }
 
+    /// The images build takes, every directory in `images_dir` with a Dockerfile except base
     pub fn image_names(&self) -> Result<Vec<String>> {
         self.check_images_dir()?;
 
         let mut names: Vec<String> = std::fs::read_dir(&self.images_dir)?
             .filter_map(std::result::Result::ok)
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .filter(|name| !name.starts_with('.') && self.image_dir(name).join("Dockerfile").exists())
+            .filter(|name| {
+                !name.starts_with('.') && name != BASE_NAME && self.image_dir(name).join("Dockerfile").exists()
+            })
             .collect();
         names.sort();
         Ok(names)
     }
 
-    pub fn build(&self, name: &str) -> Result<()> {
-        let names = self.image_names()?;
-        if !names.iter().any(|known| known == name) {
-            bail!("unknown image '{name}', expected one of: {}", names.join(", "));
+    /// Builds base first if `rebuild_base` or an image needs it and it doesn't exist yet,
+    /// then each image in turn, stopping at the first that fails
+    pub fn build(&self, names: &[String], rebuild_base: bool) -> Result<()> {
+        let known = self.image_names()?;
+        let mut images: Vec<&str> = Vec::new();
+        for name in names {
+            if name == BASE_NAME {
+                bail!("{BASE_NAME} is built with --rebuild-base");
+            }
+            if !known.contains(name) {
+                bail!("unknown image '{name}', expected one of: {}", known.join(", "));
+            }
+            if !images.contains(&name.as_str()) {
+                images.push(name);
+            }
         }
 
         check_docker()?;
-        self.build_with_base(name)
-    }
-
-    /// Builds the base image, then every other one
-    pub fn build_all(&self) -> Result<()> {
-        let names = self.image_names()?;
-        check_docker()?;
-
-        self.build_with_base(BASE_NAME)?;
-        names
-            .iter()
-            .filter(|name| *name != BASE_NAME)
-            .try_for_each(|name| self.build_with_base(name))
-    }
-
-    fn build_with_base(&self, name: &str) -> Result<()> {
-        if name != BASE_NAME && self.needs_base(name)? && !self.base_exists() {
+        if rebuild_base {
+            self.docker_build(BASE_NAME)?;
+        } else if self.any_needs_base(&images)? && !self.base_exists() {
             print_line(&format!("==> {} doesn't exist yet", self.tag_for(BASE_NAME)));
             self.docker_build(BASE_NAME)?;
         }
 
-        self.docker_build(name)
+        images.iter().try_for_each(|name| self.docker_build(name))
     }
 
     fn docker_build(&self, name: &str) -> Result<()> {
@@ -85,8 +85,18 @@ impl Builder {
     }
 
     fn needs_base(&self, name: &str) -> Result<bool> {
-        let dockerfile = std::fs::read(self.image_dir(name).join("Dockerfile"))?;
+        let path = self.image_dir(name).join("Dockerfile");
+        let dockerfile = std::fs::read(&path).with_context(|| format!("can't read {}", path.display()))?;
         Ok(is_from_base(&String::from_utf8_lossy(&dockerfile)))
+    }
+
+    fn any_needs_base(&self, names: &[&str]) -> Result<bool> {
+        for name in names {
+            if self.needs_base(name)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn base_exists(&self) -> bool {

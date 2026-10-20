@@ -148,24 +148,21 @@ _sndbx_run() {
   esac
 }
 
-# Completes the image, or nothing with --all
+# Completes the images not given yet
 _sndbx_build() {
-  local has_image=0 i
-
-  # --all stands for every image
-  for (( i = 2; i < COMP_CWORD; i++ )); do
-    case "${COMP_WORDS[i]}" in
-      -a|--all) has_image=1 ;;
-      -*) ;;
-      *) has_image=1 ;;
-    esac
-  done
+  local -a positionals=() images=()
+  local image
+  _sndbx_positionals
 
   if [[ "${cur}" == -* ]]; then
-    _sndbx_reply '-a --all -h --help'
-  elif (( ! has_image )); then
-    _sndbx_reply_list buildable
+    _sndbx_reply '-b --rebuild-base -h --help'
+    return 0
   fi
+
+  for image in $(sndbx list buildable 2>/dev/null); do
+    [[ " ${positionals[*]} " == *" ${image} "* ]] || images+=("${image}")
+  done
+  _sndbx_reply "${images[*]}"
 }
 
 # Completes the image, then its running containers, and nothing from COMMAND on

@@ -48,12 +48,12 @@ enum Commands {
     )]
     Run(Run),
 
-    /// Build an image
+    /// Build images
     #[command(
-        override_usage = "sndbx build IMAGE | --all",
+        override_usage = "sndbx build [--rebuild-base] IMAGE...",
         before_help = format!(
-            "Builds an image from `{IMAGES_DIR_SETTING}`/IMAGE, always without the docker cache.\n\
-             Builds {BASE_NAME} first if the image needs it and it doesn't exist yet."
+            "Builds images from `{IMAGES_DIR_SETTING}`/IMAGE in turn, always without the docker cache.\n\
+             Builds {BASE_NAME} first with --rebuild-base, or if an image needs it and it doesn't exist yet."
         )
     )]
     Build(Build),
@@ -134,12 +134,12 @@ struct Run {
 
 #[derive(Args)]
 struct Build {
-    /// The image's directory in `images_dir`
-    #[arg(required_unless_present = "all", conflicts_with = "all")]
-    image: Option<String>,
+    /// The images' directories in `images_dir`
+    #[arg(required_unless_present = "rebuild_base", value_name = "IMAGE")]
+    images: Vec<String>,
 
-    #[arg(short, long, help = format!("Build {BASE_NAME}, then every other image"))]
-    all: bool,
+    #[arg(short = 'b', long, help = format!("Rebuild {BASE_NAME} before the images, even if it exists"))]
+    rebuild_base: bool,
 }
 
 #[derive(Args)]
@@ -269,11 +269,7 @@ fn run(args: Run) -> Result<()> {
 }
 
 fn build(args: &Build) -> Result<()> {
-    let builder = Builder::new(&Settings::load_or_default()?);
-    match &args.image {
-        Some(image) => builder.build(image),
-        None => builder.build_all(),
-    }
+    Builder::new(&Settings::load_or_default()?).build(&args.images, args.rebuild_base)
 }
 
 fn exec(args: &Exec) -> Result<()> {
