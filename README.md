@@ -42,6 +42,24 @@ ARG TAG_PREFIX=sndbx
 FROM ${TAG_PREFIX}:base
 ```
 
+## Remove
+
+`sndbx rm IMAGE...` removes images, like `docker image rm`, and comments out their entries in the [settings](#configure) under a `# Removed by sndbx rm on <date>:` line, so their settings aren't lost. Building the image again adds a fresh entry and leaves the commented-out one for you to copy from or delete. It keeps the images' config directories, with the agents' logins and history.
+
+```sh
+sndbx rm claude          # remove sndbx:claude and comment out claude in the settings
+sndbx rm claude codex    # remove both
+```
+
+It checks every image before removing any, and refuses:
+
+- `base`, which the other images are built on
+- an image that's neither in the settings nor built
+- an image that containers use, in any state, sandboxes kept by `run --keep` included; remove them with `docker rm` first
+- a tag that another entry also runs, unless you remove them together
+
+When it can't tell where an entry is in the settings, like in a flow list `[...]`, it removes the image and says to remove the entry yourself.
+
 ## Run with sndbx
 
 `sndbx` wraps the `docker run` commands below with less typing. It:
@@ -52,7 +70,7 @@ FROM ${TAG_PREFIX}:base
 - publishes the image's `ports` plus each `-p PORT`
 - passes the top-level `docker_args`, then the image's, then everything after `--` to `docker run`
 - labels the container `sndbx.image=<name>`, which `sndbx exec` and `sndbx resume` find it by
-- logs each `docker run`, `exec`, `start` and `build` it runs to `~/.local/state/sndbx/sndbx.log` (or under `$XDG_STATE_HOME`), which `sndbx logs` follows
+- logs each `docker run`, `exec`, `start`, `build` and `image rm` it runs to `~/.local/state/sndbx/sndbx.log` (or under `$XDG_STATE_HOME`), which `sndbx logs` follows
 
 ### Install
 
@@ -114,6 +132,7 @@ sndbx run claude -k                                   # keep the container after
 sndbx exec claude gifted_mcnulty bash                 # run a command in a running claude sandbox, like docker exec -it
 sndbx exec -u root claude gifted_mcnulty bash         # as root
 sndbx resume claude sleepy_babbage                    # restart a stopped claude sandbox, like docker start -ai
+sndbx rm claude                                       # remove sndbx:claude and comment out claude in the settings
 sndbx list configured                                 # print the image names in the settings
 sndbx list buildable                                  # print the image names build accepts
 sndbx list running claude                             # print the running claude sandboxes

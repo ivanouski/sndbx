@@ -7,7 +7,9 @@ use clap::builder::NonEmptyStringValueParser;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::builder::{BASE_NAME, Builder, IMAGES_DIR_SETTING};
-use crate::docker::{self, check_container, check_docker, running_containers, stopped_containers};
+use crate::docker::{
+    self, check_container, check_docker, image_containers, image_exists, running_containers, stopped_containers,
+};
 use crate::sandbox::{MOUNT_ROOT, Options, Sandbox};
 use crate::settings::{self, Settings};
 use crate::{Result, print_line};
@@ -57,6 +59,17 @@ enum Commands {
         )
     )]
     Build(Build),
+
+    /// Remove images
+    #[command(
+        override_usage = "sndbx rm IMAGE...",
+        before_help = format!(
+            "Removes images, like docker image rm, and comments out their entries in {}.\n\
+             Keeps their config directories. Refuses images that containers use, remove those with docker rm first.",
+            settings::path().display()
+        )
+    )]
+    Rm(Rm),
 
     /// Run a command in a running sandbox
     #[command(
@@ -140,6 +153,13 @@ struct Build {
 
     #[arg(short = 'b', long, help = format!("Rebuild {BASE_NAME} before the images, even if it exists"))]
     rebuild_base: bool,
+}
+
+#[derive(Args)]
+struct Rm {
+    /// The images' names in the settings, or of built images that aren't in them
+    #[arg(required = true, value_name = "IMAGE")]
+    images: Vec<String>,
 }
 
 #[derive(Args)]
@@ -249,6 +269,7 @@ pub fn cli() -> Result<()> {
     match subcommand {
         Commands::Run(args) => run(args),
         Commands::Build(args) => build(&args),
+        Commands::Rm(args) => rm(&args),
         Commands::Exec(args) => exec(&args),
         Commands::Resume(args) => resume(&args),
         Commands::List(args) => list(args),
@@ -270,6 +291,94 @@ fn run(args: Run) -> Result<()> {
 
 fn build(args: &Build) -> Result<()> {
     Builder::new(&Settings::load_or_default()?).build(&args.images, args.rebuild_base)
+}
+
+/// An image `rm` checked
+struct Removal<'a> {
+    name: &'a str,
+    tag: String,
+    exists: bool,
+}
+
+/// Checks every image before removing any, so a typo or a container stops `rm` before it changes anything
+fn rm(args: &Rm) -> Result<()> {
+    let settings = Settings::load_or_default()?;
+    let mut names: Vec<&str> = Vec::new();
+    for name in &args.images {
+        if name == BASE_NAME {
+            bail!("{BASE_NAME} can't be removed, the other images are built on it");
+        }
+        if !names.contains(&name.as_str()) {
+            names.push(name);
+        }
+    }
+
+    check_docker()?;
+    let mut removals = Vec::new();
+    for &name in &names {
+        let configured_tag = settings.configured_tag(name);
+        let tag = configured_tag
+            .clone()
+            .unwrap_or_else(|| settings::tag(settings.tag_prefix(), name));
+        let exists = image_exists(&tag);
+        if configured_tag.is_none() && !exists {
+            bail!(
+                "unknown image '{name}', it's neither in {} nor built as {tag}",
+                settings::path().display()
+            );
+        }
+
+        let others: Vec<&str> = settings
+            .names_running(&tag)
+            .into_iter()
+            .filter(|other| !names.contains(other))
+            .collect();
+        if !others.is_empty() {
+            bail!("{tag} is also run by {}, rm them together", others.join(", "));
+        }
+        if exists {
+            let containers = image_containers(&tag)?;
+            if !containers.is_empty() {
+                bail!(
+                    "{tag} is used by containers: {}, remove them with docker rm first",
+                    containers.join(", ")
+                );
+            }
+        }
+        removals.push(Removal { name, tag, exists });
+    }
+
+    // Images that share a tag remove it once
+    let mut removed: Vec<&str> = Vec::new();
+    for removal in &removals {
+        let tag = removal.tag.as_str();
+        if !removed.contains(&tag) {
+            if removal.exists {
+                if !docker::run(&["image", "rm", tag]) {
+                    bail!("failed to remove {tag}");
+                }
+                print_line(&format!("==> Removed {tag}"));
+            } else {
+                print_line(&format!("==> {tag} doesn't exist"));
+            }
+            removed.push(tag);
+        }
+        comment_out(removal.name);
+    }
+    Ok(())
+}
+
+/// Comments out the image's entry, only warning when it can't since the image is removed
+fn comment_out(name: &str) {
+    let path = settings::path();
+    match settings::comment_out_image(name) {
+        Ok(false) => {}
+        Ok(true) => print_line(&format!("==> Commented out {name} in {}", path.display())),
+        Err(e) => eprintln!(
+            "Warning: can't comment out {name} in the settings: {e:#}.\nRemove its entry from {} yourself.",
+            path.display()
+        ),
+    }
 }
 
 fn exec(args: &Exec) -> Result<()> {

@@ -48,14 +48,14 @@ class CompletionTest < Minitest::Test
   end
 
   def test_options_match_help
-    [[], ['run'], ['build'], ['exec'], ['resume'], ['list'], %w[list running], ['logs']].each do |command|
+    [[], ['run'], ['build'], ['rm'], ['exec'], ['resume'], ['list'], %w[list running], ['logs']].each do |command|
       assert_equal help_options(*command), complete(*command, '-'), "options of sndbx #{command.join(' ')}"
     end
   end
 
   def test_commands
-    assert_equal %w[build exec list logs resume run], complete('')
-    assert_equal %w[resume run], complete('r')
+    assert_equal %w[build exec list logs resume rm run], complete('')
+    assert_equal %w[resume rm run], complete('r')
     assert_equal %w[run], complete('ru')
   end
 
@@ -165,6 +165,14 @@ class CompletionTest < Minitest::Test
     assert_equal %w[claude], complete('build', '--rebuild-base', 'codex', '')
     assert_empty complete('build', 'claude', 'codex', '')
     assert_equal %w[--rebuild-base], complete('build', '--r')
+  end
+
+  def test_rm_images
+    write_images_settings
+
+    assert_equal %w[claude codex], complete('rm', '')
+    assert_equal %w[codex], complete('rm', 'claude', '')
+    assert_empty complete('rm', 'claude', 'codex', '')
   end
 
   def test_exec_images

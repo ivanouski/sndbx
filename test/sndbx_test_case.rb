@@ -26,10 +26,18 @@ class SndbxTestCase < Minitest::Test
       exit(false) unless images.key?(tag)
       puts images[tag]
     in ['ps', *filters, '--format', '{{.Names}}']
-      status = filters.include?('--all') ? filters.find { |arg| arg.start_with?('status=') }[7..] : 'running'
-      containers.each do |image, name, state = 'running'|
-        puts name if filters.include?("label=sndbx.image=\#{image}") && state == status
+      status = filters.find { |arg| arg.start_with?('status=') }&.delete_prefix('status=')
+      status ||= 'running' unless filters.include?('--all')
+      ancestor = filters.find { |arg| arg.start_with?('ancestor=') }&.delete_prefix('ancestor=')
+      containers.each do |image, name, state = 'running', tag = "sndbx:\#{image}"|
+        next if status && state != status
+        next unless ancestor ? tag == ancestor : filters.include?("label=sndbx.image=\#{image}")
+
+        puts name
       end
+    in ['image', 'rm', tag]
+      exit(false) if ENV['DOCKER_BROKEN'] == tag || !images.key?(tag)
+      File.write(images_path, images.except(tag).map { |name, user| "\#{name} \#{user}\\n" }.join)
     in ['build', *, '-t', tag, _]
       exit(false) if ENV['DOCKER_BROKEN'] == tag
       File.write(images_path, "\#{tag}\\n", mode: 'a')
@@ -107,8 +115,9 @@ class SndbxTestCase < Minitest::Test
     add_docker_container('claude', 'sleepy_babbage', 'exited')
   end
 
-  def add_docker_container(image, name, state = 'running')
-    File.write(@docker_containers, "#{image} #{name} #{state}\n", mode: 'a')
+  # A container of the image in the settings, or of no image for one sndbx didn't start, from its tag
+  def add_docker_container(image, name, state = 'running', tag = "sndbx:#{image}")
+    File.write(@docker_containers, "#{image} #{name} #{state} #{tag}\n", mode: 'a')
   end
 
   def add_docker_image(tag, user: 'ubuntu')
@@ -133,6 +142,10 @@ class SndbxTestCase < Minitest::Test
 
   def docker_starts
     docker_calls.select { |call| call.first == 'start' }
+  end
+
+  def docker_image_rms
+    docker_calls.select { |call| call.first(2) == %w[image rm] }
   end
 
   def docker_builds

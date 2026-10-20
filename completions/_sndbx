@@ -148,18 +148,18 @@ _sndbx_run() {
   esac
 }
 
-# Completes the images not given yet
-_sndbx_build() {
+# Completes the options in $1, or the images `sndbx list $2` prints that aren't given yet
+_sndbx_images() {
   local -a positionals=() images=()
   local image
   _sndbx_positionals
 
   if [[ "${cur}" == -* ]]; then
-    _sndbx_reply '-b --rebuild-base -h --help'
+    _sndbx_reply "$1"
     return 0
   fi
 
-  for image in $(sndbx list buildable 2>/dev/null); do
+  for image in $(sndbx list "$2" 2>/dev/null); do
     [[ " ${positionals[*]} " == *" ${image} "* ]] || images+=("${image}")
   done
   _sndbx_reply "${images[*]}"
@@ -253,7 +253,7 @@ _sndbx() {
     if [[ "${cur}" == -* ]]; then
       _sndbx_reply '-V --version -h --help'
     else
-      _sndbx_reply 'run build exec resume list logs'
+      _sndbx_reply 'run build rm exec resume list logs'
     fi
     return 0
   fi
@@ -279,7 +279,8 @@ _sndbx() {
 
   case "${command}" in
     run) _sndbx_run ;;
-    build) _sndbx_build ;;
+    build) _sndbx_images '-b --rebuild-base -h --help' buildable ;;
+    rm) _sndbx_images '-h --help' configured ;;
     exec) _sndbx_exec ;;
     resume) _sndbx_resume ;;
     list) _sndbx_list ;;

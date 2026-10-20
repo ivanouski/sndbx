@@ -165,6 +165,23 @@ impl Settings {
         entry.tag.clone().unwrap_or_else(|| tag(self.tag_prefix(), &entry.name))
     }
 
+    /// The tag the image's entry runs, `None` when it has no entry
+    pub fn configured_tag(&self, name: &str) -> Option<String> {
+        self.images()
+            .iter()
+            .find(|entry| entry.name == name)
+            .map(|entry| self.entry_tag(entry))
+    }
+
+    /// The images whose entries run the tag
+    pub fn names_running(&self, tag: &str) -> Vec<&str> {
+        self.images()
+            .iter()
+            .filter(|entry| self.entry_tag(entry) == tag)
+            .map(|entry| entry.name.as_str())
+            .collect()
+    }
+
     pub fn image_names(&self) -> Vec<String> {
         self.images().iter().map(|entry| entry.name.clone()).collect()
     }
@@ -254,7 +271,7 @@ pub fn add_image(name: &str) -> Result<Added> {
 
     let tag = tag(settings.tag_prefix(), name);
     let images = settings.images();
-    let added = if images.iter().any(|entry| settings.entry_tag(entry) == tag) {
+    let added = if !settings.names_running(&tag).is_empty() {
         Added::Already
     } else if let Some(entry) = images.iter().find(|entry| entry.name == name) {
         Added::OtherTag(settings.entry_tag(entry))
@@ -304,10 +321,7 @@ fn addition(file: &File, content: &str, name: &str) -> Option<String> {
         "\n"
     };
     let entry = entry_yaml(name);
-    let list_indents = content.lines().rev().filter_map(|line| {
-        let item = line.trim_start_matches(' ');
-        (item == "-" || item.starts_with("- ")).then_some(line.len() - item.len())
-    });
+    let list_indents = content.lines().rev().filter_map(list_item_indent);
     let mut candidates: Vec<String> = Vec::new();
     for indent in list_indents.chain([2, 0]) {
         let candidate = format!("{}{entry}", " ".repeat(indent));
@@ -321,6 +335,89 @@ fn addition(file: &File, content: &str, name: &str) -> Option<String> {
         .into_iter()
         .map(|candidate| format!("{newline}{candidate}"))
         .find(|addition| parse(&format!("{content}{addition}")).is_ok_and(|parsed| parsed == expected))
+}
+
+/// Comments out the image's entry in the settings file, keeping the rest of the file as written.
+/// False when there's no settings file or no entry.
+pub fn comment_out_image(name: &str) -> Result<bool> {
+    let path = path();
+    if !path.exists() {
+        return Ok(false);
+    }
+    let content = std::fs::read_to_string(&path).with_context(|| format!("can't read {}", path.display()))?;
+    let settings = validate(&content, &path)?;
+    let Some(index) = settings.images().iter().position(|entry| entry.name == name) else {
+        return Ok(false);
+    };
+
+    let marker = format!("# Removed by sndbx rm on {}:", jiff::Zoned::now().strftime("%F"));
+    let Some(commented) = commented_out(&settings.file, &content, index, &marker) else {
+        bail!("can't tell where its entry in {} is", path.display());
+    };
+    // Writing the file in place follows a symlink and keeps the file's permissions, unlike replacing it
+    std::fs::write(&path, commented).with_context(|| format!("can't write {}", path.display()))?;
+    Ok(true)
+}
+
+/// `content` with the entry at `index` in the images list commented out under `marker`, and nothing else changed.
+/// The entry is the lines from a list item to the next line indented as far as it or less, comments and blank
+/// lines aside; the first list item whose lines are the entry is it. `None` when none is, like in a flow list.
+fn commented_out(file: &File, content: &str, index: usize, marker: &str) -> Option<String> {
+    let mut expected = file.clone();
+    expected.images.as_mut()?.remove(index);
+    let expected = without_empty_images(expected);
+
+    let lines: Vec<&str> = content.split_inclusive('\n').collect();
+    let is_skipped = |line: &str| matches!(line.trim_start().chars().next(), None | Some('#'));
+    (0..lines.len())
+        .filter_map(|start| list_item_indent(lines[start]).map(|indent| (start, indent)))
+        .map(|(start, indent)| {
+            let mut end = (start + 1..lines.len())
+                .find(|&i| !is_skipped(lines[i]) && indent_of(lines[i]) <= indent)
+                .unwrap_or(lines.len());
+            // The comments and blank lines after the entry aren't part of it
+            while end > start + 1 && is_skipped(lines[end - 1]) {
+                end -= 1;
+            }
+
+            let mut commented = lines[..start].concat();
+            commented.push_str(&" ".repeat(indent));
+            commented.push_str(marker);
+            commented.push('\n');
+            for line in &lines[start..end] {
+                if is_skipped(line) {
+                    commented.push_str(line);
+                } else {
+                    commented.push_str(&line[..indent]);
+                    commented.push_str("# ");
+                    commented.push_str(&line[indent..]);
+                }
+            }
+            if !commented.ends_with('\n') {
+                commented.push('\n');
+            }
+            commented.push_str(&lines[end..].concat());
+            commented
+        })
+        .find(|commented| parse(commented).is_ok_and(|parsed| without_empty_images(parsed) == expected))
+}
+
+/// Without an empty images list, which a list with all its entries commented out is: no list at all
+fn without_empty_images(mut file: File) -> File {
+    if file.images.as_ref().is_some_and(Vec::is_empty) {
+        file.images = None;
+    }
+    file
+}
+
+/// The indent of a line that starts a list item, like `  - name: a`
+fn list_item_indent(line: &str) -> Option<usize> {
+    let item = line.trim_start_matches(' ').trim_end();
+    (item == "-" || item.starts_with("- ")).then(|| indent_of(line))
+}
+
+fn indent_of(line: &str) -> usize {
+    line.len() - line.trim_start_matches(' ').len()
 }
 
 /// A YAML string; `serde_norway` would also turn numbers and booleans into a `String`
@@ -430,6 +527,54 @@ mod tests {
             let content = added("images:\n  - name: a\n", name).unwrap();
             assert_eq!(parse(&content).unwrap().images.unwrap()[1].name, name);
         }
+    }
+
+    fn commented(content: &str, index: usize) -> Option<String> {
+        commented_out(&parse(content).unwrap(), content, index, "# Removed:")
+    }
+
+    #[test]
+    fn comments_out_an_entry() {
+        assert_eq!(
+            commented("images:\n  - name: a\n    ports: ['1']\n  - name: b\n", 0).unwrap(),
+            "images:\n  # Removed:\n  # - name: a\n  #   ports: ['1']\n  - name: b\n"
+        );
+        assert_eq!(
+            commented("images:\n- name: a\n- user: x\n  name: b\ndocker_args: [y]\n", 1).unwrap(),
+            "images:\n- name: a\n# Removed:\n# - user: x\n#   name: b\ndocker_args: [y]\n"
+        );
+    }
+
+    #[test]
+    fn comments_out_an_entry_with_a_list() {
+        let content =
+            "images:\n  - name: a\n    docker_args:\n      - x\n\n    # mine\n    ports: ['1']\n  - name: b\n";
+        assert_eq!(
+            commented(content, 0).unwrap(),
+            "images:\n  # Removed:\n  # - name: a\n  #   docker_args:\n  #     - x\n\n    # mine\n  #   ports: ['1']\n  - name: b\n"
+        );
+        assert_eq!(
+            commented(content, 1).unwrap(),
+            "images:\n  - name: a\n    docker_args:\n      - x\n\n    # mine\n    ports: ['1']\n  # Removed:\n  # - name: b\n"
+        );
+    }
+
+    #[test]
+    fn comments_out_the_last_entry() {
+        assert_eq!(
+            commented("images:\n  - name: a\n\n# end", 0).unwrap(),
+            "images:\n  # Removed:\n  # - name: a\n\n# end"
+        );
+        assert_eq!(
+            commented("images:\n  - name: a", 0).unwrap(),
+            "images:\n  # Removed:\n  # - name: a\n"
+        );
+    }
+
+    #[test]
+    fn comments_out_only_whole_entries() {
+        assert_eq!(commented("images: [{name: a}]\n", 0), None);
+        assert_eq!(commented("docker_args:\n  - x\nimages: [{name: a}]\n", 0), None);
     }
 
     #[test]

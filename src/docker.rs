@@ -42,19 +42,27 @@ pub fn image_user(tag: &str) -> Option<String> {
 }
 
 pub fn running_containers(image: &str) -> Result<Vec<String>> {
-    containers(image, &[])
+    containers(&["--filter", &label_filter(image)])
 }
 
 pub fn stopped_containers(image: &str) -> Result<Vec<String>> {
-    containers(image, &["--all", "--filter", "status=exited"])
+    containers(&["--all", "--filter", "status=exited", "--filter", &label_filter(image)])
 }
 
-fn containers(image: &str, ps_args: &[&str]) -> Result<Vec<String>> {
-    let label = format!("label={IMAGE_LABEL}={image}");
+/// The containers in any state that use the image, sndbx's sandboxes or not, which keep docker from removing it
+pub fn image_containers(tag: &str) -> Result<Vec<String>> {
+    containers(&["--all", "--filter", &format!("ancestor={tag}")])
+}
+
+fn label_filter(image: &str) -> String {
+    format!("label={IMAGE_LABEL}={image}")
+}
+
+fn containers(ps_args: &[&str]) -> Result<Vec<String>> {
     let output = Command::new(DOCKER)
         .arg("ps")
         .args(ps_args)
-        .args(["--filter", &label, "--format", "{{.Names}}"])
+        .args(["--format", "{{.Names}}"])
         .stderr(Stdio::null())
         .output();
 
