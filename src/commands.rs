@@ -10,7 +10,7 @@ use crate::builder::{BASE_NAME, Builder};
 use crate::docker::{
     self, check_container, check_docker, image_containers, image_exists, running_containers, stopped_containers,
 };
-use crate::proxy::{Hosts, Proxy};
+use crate::proxy::{self, Hosts, Proxy};
 use crate::sandbox::{MOUNT_ROOT, Options, Sandbox};
 use crate::settings::{self, Allow, IMAGES_DIR_SETTING, Settings};
 use crate::{Result, allowlist, paths, print_line, print_status, unique};
@@ -99,13 +99,11 @@ enum Commands {
     )]
     List(List),
 
-    /// Follow the log of docker commands
+    /// Follow the docker commands sndbx ran or the proxy's requests
     #[command(
-        override_usage = "sndbx logs [options]",
-        before_help = format!(
-            "Follows {}, the docker commands sndbx ran, like tail -f.",
-            docker::log_path().display()
-        )
+        disable_help_subcommand = true,
+        override_usage = "sndbx logs WHAT [options]",
+        before_help = "Follows a log, like tail -f."
     )]
     Logs(Logs),
 }
@@ -235,6 +233,39 @@ struct ListImage {
 
 #[derive(Args)]
 struct Logs {
+    #[command(subcommand)]
+    what: Option<LogsWhat>,
+}
+
+#[derive(Subcommand)]
+enum LogsWhat {
+    /// The docker commands sndbx ran
+    #[command(
+        override_usage = "sndbx logs commands [options]",
+        before_help = format!("Follows {}, the docker commands sndbx ran.", docker::log_path().display())
+    )]
+    Commands(Lines),
+
+    /// The requests the proxy let through or denied
+    #[command(
+        override_usage = "sndbx logs proxy [options]",
+        before_help = "Follows the access log of the running proxy, which goes when the proxy is replaced."
+    )]
+    Proxy(ProxyLogs),
+}
+
+#[derive(Args)]
+struct ProxyLogs {
+    #[command(flatten)]
+    lines: Lines,
+
+    /// Only the requests the proxy denied
+    #[arg(short, long)]
+    denied: bool,
+}
+
+#[derive(Args)]
+struct Lines {
     /// Start with the last N lines
     #[arg(
         short = 'n',
@@ -277,7 +308,7 @@ pub fn cli() -> Result<()> {
         Commands::Exec(args) => exec(&args),
         Commands::Resume(args) => resume(&args),
         Commands::List(args) => list(args),
-        Commands::Logs(args) => logs(&args),
+        Commands::Logs(args) => logs(args),
     }
 }
 
@@ -456,7 +487,24 @@ fn list(args: List) -> Result<()> {
     Ok(())
 }
 
-fn logs(args: &Logs) -> Result<()> {
+fn logs(args: Logs) -> Result<()> {
+    match args.what {
+        None => {
+            let mut out = std::io::stdout().lock();
+            if let Some(logs) = command().find_subcommand_mut("logs") {
+                let _ = logs.write_help(&mut out);
+            }
+            Ok(())
+        }
+        Some(LogsWhat::Commands(args)) => command_log(args.lines),
+        Some(LogsWhat::Proxy(args)) => {
+            check_docker()?;
+            proxy::follow_log(args.lines.lines, args.denied)
+        }
+    }
+}
+
+fn command_log(lines: u64) -> Result<()> {
     const TAIL: &str = "tail";
 
     let log_path = docker::log_path();
@@ -465,7 +513,7 @@ fn logs(args: &Logs) -> Result<()> {
     }
 
     let e = Command::new(TAIL)
-        .args(["-n", &args.lines.to_string(), "-f"])
+        .args(["-n", &lines.to_string(), "-f"])
         .arg(&log_path)
         .exec();
     if e.kind() == std::io::ErrorKind::NotFound {

@@ -34,7 +34,10 @@ class CliTest < SndbxTestCase
   end
 
   def test_logs_help
-    assert_help 'Usage: sndbx logs [options]', sndbx('logs', '-h')
+    assert_help 'Usage: sndbx logs WHAT [options]', sndbx('logs', '-h')
+    assert_help 'Usage: sndbx logs WHAT [options]', sndbx('logs')
+    assert_help 'Usage: sndbx logs commands [options]', sndbx('logs', 'commands', '-h')
+    assert_help 'Usage: sndbx logs proxy [options]', sndbx('logs', 'proxy', '-h')
   end
 
   def test_version

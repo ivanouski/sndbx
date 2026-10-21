@@ -235,10 +235,21 @@ _sndbx_list() {
   fi
 }
 
-# Completes only the options, not the line count
+# Completes what to follow, then its options, not the line count
 _sndbx_logs() {
-  if [[ "${cur}" == -* ]] && [[ "${prev}" != -n && "${prev}" != --lines ]]; then
-    _sndbx_reply '-n --lines -h --help'
+  local -a positionals=()
+  _sndbx_positionals
+
+  if [[ "${prev}" == -n || "${prev}" == --lines ]]; then
+    return 0
+  elif [[ "${cur}" == -* ]]; then
+    case "${positionals[0]}" in
+      commands) _sndbx_reply '-n --lines -h --help' ;;
+      proxy) _sndbx_reply '-n --lines -d --denied -h --help' ;;
+      *) _sndbx_reply '-h --help' ;;
+    esac
+  elif (( ${#positionals[@]} == 0 )); then
+    _sndbx_reply 'commands proxy'
   fi
 }
 

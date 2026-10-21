@@ -61,7 +61,8 @@ class LogsTest < SndbxTestCase
 
     assert_equal 1, File.readlines(path).size
     refute File.exist?(log_path)
-    assert_equal ['-n', '10', '-f', path], JSON.parse(sndbx('logs', env: { 'XDG_STATE_HOME' => state_home }).out)
+    result = sndbx('logs', 'commands', env: { 'XDG_STATE_HOME' => state_home })
+    assert_equal ['-n', '10', '-f', path], JSON.parse(result.out)
   end
 
   def test_logs_follows_the_log
@@ -69,7 +70,7 @@ class LogsTest < SndbxTestCase
     FileUtils.mkdir_p(File.dirname(log_path))
     File.write(log_path, '')
 
-    result = sndbx('logs')
+    result = sndbx('logs', 'commands')
 
     assert_predicate result, :success?
     assert_equal ['-n', '10', '-f', log_path], JSON.parse(result.out)
@@ -80,34 +81,75 @@ class LogsTest < SndbxTestCase
     FileUtils.mkdir_p(File.dirname(log_path))
     File.write(log_path, '')
 
-    assert_equal ['-n', '50', '-f', log_path], JSON.parse(sndbx('logs', '-n', '50').out)
-    assert_equal ['-n', '0', '-f', log_path], JSON.parse(sndbx('logs', '--lines=0').out)
+    assert_equal ['-n', '50', '-f', log_path], JSON.parse(sndbx('logs', 'commands', '-n', '50').out)
+    assert_equal ['-n', '0', '-f', log_path], JSON.parse(sndbx('logs', 'commands', '--lines=0').out)
   end
 
   def test_logs_without_a_log
     write_fake_tail
 
-    assert_error "no log yet at #{log_path}", sndbx('logs')
+    assert_error "no log yet at #{log_path}", sndbx('logs', 'commands')
   end
 
   def test_logs_without_tail
     FileUtils.mkdir_p(File.dirname(log_path))
     File.write(log_path, '')
 
-    assert_error 'tail is not installed', sndbx('logs')
+    assert_error 'tail is not installed', sndbx('logs', 'commands')
   end
 
   def test_logs_needs_a_line_count
-    assert_usage_error "invalid value 'x' for '--lines <N>': expected a number", sndbx('logs', '-n', 'x')
+    assert_usage_error "invalid value 'x' for '--lines <N>': expected a number", sndbx('logs', 'commands', '-n', 'x')
     assert_usage_error "invalid value '-1' for '--lines <N>': expected a line count of 0 or more",
-                       sndbx('logs', '-n', '-1')
+                       sndbx('logs', 'commands', '-n', '-1')
   end
 
   def test_logs_takes_no_arguments
-    assert_usage_error "unexpected argument 'claude' found", sndbx('logs', 'claude')
+    assert_usage_error "unexpected argument 'claude' found", sndbx('logs', 'commands', 'claude')
+    assert_usage_error "unrecognized subcommand 'claude'", sndbx('logs', 'claude')
+  end
+
+  def test_logs_follows_the_proxy_log
+    write_running_proxy
+
+    result = sndbx('logs', 'proxy', '-n', '50')
+
+    assert_predicate result, :success?
+    assert_equal %w[exec sndbx-proxy tail -n 50 -F /var/log/squid/access.log], docker_calls.last
+  end
+
+  def test_logs_follows_the_denied_proxy_requests
+    write_running_proxy
+
+    assert_predicate sndbx('logs', 'proxy', '--denied'), :success?
+    exec, container, sh, c, script, name, *args = docker_calls.last
+    assert_equal %w[exec sndbx-proxy sh -c], [exec, container, sh, c]
+    assert_equal ['sh', '10', '/var/log/squid/access.log', ' TCP_DENIED/'], [name, *args]
+
+    log = File.join(@root, 'access.log')
+    lines = (1..12).map { |i| "2026-10-21T14:02:#{i}+0000 172.18.0.2 TCP_DENIED/403 CONNECT host#{i}:443" }
+    File.write(log, "#{lines.join("\n")}\n2026-10-21T14:03:00+0000 172.18.0.2 TCP_TUNNEL/200 CONNECT ok:443\n")
+    # The real tail, which with -F only reads what's there
+    real_tail = ENV.fetch('PATH').split(':').map { |dir| File.join(dir, 'tail') }.find { |path| File.executable?(path) }
+    write_executable(File.join(@bin, 'tail'),
+                     "#!/bin/sh\n[ \"$3\" = -F ] && exec #{real_tail} \"$1\" \"$2\" \"$4\"\nexec #{real_tail} \"$@\"\n")
+    env = { 'PATH' => "#{@bin}:#{ENV.fetch('PATH')}" }
+    out = IO.popen(env, ['sh', '-c', script, name, '2', log, args.last], &:read)
+
+    assert_equal "#{lines[-2..].join("\n")}\n", out
+  end
+
+  def test_logs_without_a_running_proxy
+    assert_error "the proxy sndbx-proxy isn't running, sndbx run starts it", sndbx('logs', 'proxy')
+    File.write(@docker_proxy, 'false false 0 squid /x bridge')
+    assert_error "the proxy sndbx-proxy isn't running, sndbx run starts it", sndbx('logs', 'proxy')
   end
 
   private
+
+  def write_running_proxy
+    File.write(@docker_proxy, 'true false 0 squid /x bridge sndbx-internal')
+  end
 
   def write_fake_tail
     write_executable(File.join(@bin, 'tail'), "#!#{RbConfig.ruby}\nrequire 'json'\nputs ARGV.to_json\n")

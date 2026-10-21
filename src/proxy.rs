@@ -1,6 +1,7 @@
 //! The proxy that proxied sandboxes reach the network through: they are on an internal network
 //! with no route out, and the proxy, also on the default one, lets through only the allowed hosts, or every one
 
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -13,6 +14,9 @@ const NETWORK: &str = "sndbx-internal";
 const CONTAINER: &str = "sndbx-proxy";
 const PORT: u16 = 3128;
 const CONFIG_TARGET: &str = "/etc/squid/squid.conf";
+const ACCESS_LOG: &str = "/var/log/squid/access.log";
+// In a denied request's line, after the time and the sandbox's address
+const DENIED: &str = " TCP_DENIED/";
 // Docker's default network, which the proxy reaches the hosts through
 const EGRESS_NETWORK: &str = "bridge";
 // Squid stops within a moment of starting when it can't run, like with a config it can't use
@@ -190,12 +194,38 @@ fn check_up(restarts: u64) -> Result<()> {
     Ok(())
 }
 
+/// Follows the running proxy's access log from its last `lines` lines, only the denied requests' with `denied`
+pub fn follow_log(lines: u64, denied: bool) -> Result<()> {
+    if !container_state(CONTAINER).is_some_and(|state| state.up) {
+        bail!("the proxy {CONTAINER} isn't running, sndbx run starts it");
+    }
+    let lines = lines.to_string();
+    // With a terminal, Ctrl-C stops tail in the proxy too, not just docker. Only when the output goes to it too, -t
+    // would end piped lines in \r\n.
+    let mut args = vec!["exec"];
+    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+        args.push("-it");
+    }
+    args.push(CONTAINER);
+    if denied {
+        // The last denied lines up to the log's size now, then the ones after it, so none shows twice or goes missing
+        let script = "size=$(wc -c < \"$2\") && head -c \"$size\" \"$2\" | grep -F -- \"$3\" | tail -n \"$1\"; \
+                      tail -c +$((size + 1)) -F \"$2\" | grep --line-buffered -F -- \"$3\"";
+        args.extend(["sh", "-c", script, "sh", &lines, ACCESS_LOG, DENIED]);
+    } else {
+        // -F keeps following when the log is rotated or recreated
+        args.extend(["tail", "-n", &lines, "-F", ACCESS_LOG]);
+    }
+    docker::exec(&args)
+}
+
 fn start_error() -> String {
     format!("can't start the proxy, see docker logs {CONTAINER}")
 }
 
 /// Squid's config: HTTP to port 80 and HTTPS to port 443 only, only to the hosts, no cache. Requests go to squid's own
-/// access log, its `proxy` user can't open the container's stdout.
+/// access log, its `proxy` user can't open the container's stdout, a line each with the time like sndbx's log, the
+/// sandbox's address, how squid handled it and the HTTP status, the method and the URL.
 fn config(hosts: &Hosts) -> String {
     // Squid refuses an acl without values. With -n, squid matches only the host the request names, without it
     // the reverse DNS name of an IP too, which whoever runs the IP chooses, like x.github.com.
@@ -214,7 +244,8 @@ fn config(hosts: &Hosts) -> String {
     format!(
         "http_port {PORT}\nacl SSL_ports port 443\nacl Safe_ports port 80 443\n{acl}\
          http_access deny !Safe_ports\nhttp_access deny CONNECT !SSL_ports\n{allow}\
-         http_access deny all\ncache deny all\n"
+         http_access deny all\ncache deny all\n\
+         logformat sndbx %{{%FT%T%z}}tl %>a %Ss/%03>Hs %rm %ru\naccess_log {ACCESS_LOG} sndbx\n"
     )
 }
 
@@ -234,7 +265,9 @@ mod tests {
              http_access deny CONNECT !SSL_ports\n\
              http_access allow allowed\n\
              http_access deny all\n\
-             cache deny all\n"
+             cache deny all\n\
+             logformat sndbx %{%FT%T%z}tl %>a %Ss/%03>Hs %rm %ru\n\
+             access_log /var/log/squid/access.log sndbx\n"
         );
     }
 
@@ -258,7 +291,9 @@ mod tests {
              http_access deny to_linklocal\n\
              http_access allow all\n\
              http_access deny all\n\
-             cache deny all\n"
+             cache deny all\n\
+             logformat sndbx %{%FT%T%z}tl %>a %Ss/%03>Hs %rm %ru\n\
+             access_log /var/log/squid/access.log sndbx\n"
         );
     }
 }

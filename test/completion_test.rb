@@ -48,7 +48,8 @@ class CompletionTest < Minitest::Test
   end
 
   def test_options_match_help
-    [[], ['run'], ['build'], ['rm'], ['exec'], ['resume'], ['list'], %w[list running], ['logs']].each do |command|
+    [[], ['run'], ['build'], ['rm'], ['exec'], ['resume'], ['list'], %w[list running], ['logs'], %w[logs commands],
+     %w[logs proxy]].each do |command|
       assert_equal help_options(*command), complete(*command, '-'), "options of sndbx #{command.join(' ')}"
     end
   end
@@ -251,12 +252,18 @@ class CompletionTest < Minitest::Test
     assert_empty complete('list', 'running', 'claude', '')
   end
 
-  def test_logs_completes_nothing_but_options
+  def test_logs_completes_what_to_follow
+    assert_equal %w[commands proxy], complete('logs', '')
+    assert_equal %w[proxy], complete('logs', 'p')
+  end
+
+  def test_logs_completes_nothing_but_options_after_what
     write_images_settings
 
-    assert_empty complete('logs', '')
-    assert_empty complete('logs', '-n', '')
-    assert_empty complete('logs', '-n', '-')
+    assert_empty complete('logs', 'commands', '')
+    assert_empty complete('logs', 'proxy', '-n', '')
+    assert_empty complete('logs', 'proxy', '-n', '-')
+    assert_empty complete('logs', 'proxy', '-n', '5', '')
   end
 
   def test_volume_completes_directories
