@@ -387,47 +387,75 @@ pub fn comment_out_image(name: &str) -> Result<bool> {
     Ok(true)
 }
 
-/// `content` with the entry at `index` in the images list commented out under `marker`, and nothing else changed.
-/// The entry is the lines from a list item to the next line indented as far as it or less, comments and blank
-/// lines aside; the first list item whose lines are the entry is it. `None` when none is, like in a flow list.
+/// `content` with the entry at `index` in the images list commented out under `marker`, and nothing else changed:
+/// the first list item that, commented out, leaves the settings without that entry. `None` when none does,
+/// like in a flow list.
 fn commented_out(file: &File, content: &str, index: usize, marker: &str) -> Option<String> {
     let mut expected = file.clone();
     expected.images.as_mut()?.remove(index);
     let expected = without_empty_images(expected);
 
     let lines: Vec<&str> = content.split_inclusive('\n').collect();
-    let is_skipped = |line: &str| matches!(line.trim_start().chars().next(), None | Some('#'));
-    (0..lines.len())
-        .filter_map(|start| list_item_indent(lines[start]).map(|indent| (start, indent)))
-        .map(|(start, indent)| {
-            let mut end = (start + 1..lines.len())
-                .find(|&i| !is_skipped(lines[i]) && indent_of(lines[i]) <= indent)
-                .unwrap_or(lines.len());
-            // The comments and blank lines after the entry aren't part of it
-            while end > start + 1 && is_skipped(lines[end - 1]) {
-                end -= 1;
-            }
-
-            let mut commented = lines[..start].concat();
-            commented.push_str(&" ".repeat(indent));
-            commented.push_str(marker);
-            commented.push('\n');
-            for line in &lines[start..end] {
-                if is_skipped(line) {
-                    commented.push_str(line);
-                } else {
-                    commented.push_str(&line[..indent]);
-                    commented.push_str("# ");
-                    commented.push_str(&line[indent..]);
-                }
-            }
-            if !commented.ends_with('\n') {
-                commented.push('\n');
-            }
-            commented.push_str(&lines[end..].concat());
-            commented
-        })
+    list_items(&lines)
+        .map(|item| comment_out(&lines, &item, marker))
         .find(|commented| parse(commented).is_ok_and(|parsed| without_empty_images(parsed) == expected))
+}
+
+/// The lines `start..end` of a list item, which starts at `indent`
+struct ListItem {
+    start: usize,
+    end: usize,
+    indent: usize,
+}
+
+/// Each list item: from its `- ` line to the next line indented as far as it or less, comments and blank lines
+/// aside, without the comments and blank lines at its end
+fn list_items<'a>(lines: &'a [&str]) -> impl Iterator<Item = ListItem> + 'a {
+    lines.iter().enumerate().filter_map(|(start, line)| {
+        let indent = list_item_indent(line)?;
+        let rest = &lines[start + 1..];
+        let next = rest
+            .iter()
+            .position(|line| !is_blank_or_comment(line) && indent_of(line) <= indent)
+            .unwrap_or(rest.len());
+        let content = rest[..next]
+            .iter()
+            .rposition(|line| !is_blank_or_comment(line))
+            .map_or(0, |last| last + 1);
+        Some(ListItem {
+            start,
+            end: start + 1 + content,
+            indent,
+        })
+    })
+}
+
+/// `lines` with the item's lines commented out at its indent under `marker`, its comments and blank lines as they are
+fn comment_out(lines: &[&str], item: &ListItem, marker: &str) -> String {
+    let mut commented = lines[..item.start].concat();
+    commented.push_str(&" ".repeat(item.indent));
+    commented.push_str(marker);
+    commented.push('\n');
+    for line in &lines[item.start..item.end] {
+        if is_blank_or_comment(line) {
+            commented.push_str(line);
+        } else {
+            let (indent, rest) = line.split_at(item.indent);
+            commented.push_str(indent);
+            commented.push_str("# ");
+            commented.push_str(rest);
+        }
+    }
+    // The file's last line may have no newline
+    if !commented.ends_with('\n') {
+        commented.push('\n');
+    }
+    commented.push_str(&lines[item.end..].concat());
+    commented
+}
+
+fn is_blank_or_comment(line: &str) -> bool {
+    matches!(line.trim_start().chars().next(), None | Some('#'))
 }
 
 /// Without an empty images list, which a list with all its entries commented out is: no list at all
