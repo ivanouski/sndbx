@@ -330,43 +330,52 @@ fn rm(args: &Rm) -> Result<()> {
     }
 
     check_docker()?;
-    let mut removals = Vec::new();
-    for &name in &names {
-        let configured_tag = settings.configured_tag(name);
-        let tag = configured_tag
-            .clone()
-            .unwrap_or_else(|| settings::tag(settings.tag_prefix(), name));
-        let exists = image_exists(&tag);
-        if configured_tag.is_none() && !exists {
-            bail!(
-                "unknown image '{name}', it's neither in {} nor built as {tag}",
-                settings::path().display()
-            );
-        }
+    let removals = names
+        .iter()
+        .map(|name| check_removal(&settings, name, &names))
+        .collect::<Result<Vec<_>>>()?;
+    remove_images(&removals)
+}
 
-        let others: Vec<&str> = settings
-            .names_running(&tag)
-            .into_iter()
-            .filter(|other| !names.contains(other))
-            .collect();
-        if !others.is_empty() {
-            bail!("{tag} is also run by {}, rm them together", others.join(", "));
-        }
-        if exists {
-            let containers = image_containers(&tag)?;
-            if !containers.is_empty() {
-                bail!(
-                    "{tag} is used by containers: {}, remove them with docker rm first",
-                    containers.join(", ")
-                );
-            }
-        }
-        removals.push(Removal { name, tag, exists });
+/// The image as `rm` removes it along with `names`, an error when it's unknown, another image not in `names`
+/// runs its tag too, or containers use it
+fn check_removal<'a>(settings: &Settings, name: &'a str, names: &[&str]) -> Result<Removal<'a>> {
+    let configured_tag = settings.configured_tag(name);
+    let tag = configured_tag
+        .clone()
+        .unwrap_or_else(|| settings::tag(settings.tag_prefix(), name));
+    let exists = image_exists(&tag);
+    if configured_tag.is_none() && !exists {
+        bail!(
+            "unknown image '{name}', it's neither in {} nor built as {tag}",
+            settings::path().display()
+        );
     }
 
-    // Images that share a tag remove it once
+    let others: Vec<&str> = settings
+        .names_running(&tag)
+        .into_iter()
+        .filter(|other| !names.contains(other))
+        .collect();
+    if !others.is_empty() {
+        bail!("{tag} is also run by {}, rm them together", others.join(", "));
+    }
+    if exists {
+        let containers = image_containers(&tag)?;
+        if !containers.is_empty() {
+            bail!(
+                "{tag} is used by containers: {}, remove them with docker rm first",
+                containers.join(", ")
+            );
+        }
+    }
+    Ok(Removal { name, tag, exists })
+}
+
+/// Removes the checked images and comments out their entries, images that share a tag remove it once
+fn remove_images(removals: &[Removal]) -> Result<()> {
     let mut removed: Vec<&str> = Vec::new();
-    for removal in &removals {
+    for removal in removals {
         let tag = removal.tag.as_str();
         if !removed.contains(&tag) {
             if removal.exists {
