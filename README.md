@@ -13,7 +13,7 @@ Docker images for running coding agents in a sandbox, plus `sndbx`, a small wrap
 
 All are built on `sndbx:base` (`images/base/`): Ubuntu with node, python, ruby, rust, uv and postgres via mise, and Playwright with headless Chromium.
 
-**opencode** keeps its config in `~/.config/opencode`, so its settings entry needs `config_target: .config/opencode`; the default, `~/.opencode`, would hide the binary the image installs there. `images/opencode/opencode/config.json` is an example config for Ollama on the host; copy it into opencode's config directory. The container reaches the host with `--add-host=host.docker.internal:host-gateway`, and on Linux Ollama must listen beyond loopback, e.g. `OLLAMA_HOST=0.0.0.0 ollama serve`.
+**opencode** keeps its config in `~/.config/opencode`, so its settings entry needs `config_target: .config/opencode`; with the default it would get its config mounted at `~/.opencode`, where it doesn't look. `images/opencode/opencode/opencode.json` is an example config for Ollama on the host; copy it into opencode's config directory. The container reaches the host with `--add-host=host.docker.internal:host-gateway`, and on Linux Ollama must listen beyond loopback, e.g. `OLLAMA_HOST=0.0.0.0 ollama serve`.
 
 **codex** sandboxes its commands with bubblewrap, which needs user namespaces that docker's default seccomp profile blocks, so the image starts it with `--sandbox danger-full-access` and the container is the sandbox.
 
