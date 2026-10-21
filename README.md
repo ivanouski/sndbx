@@ -42,6 +42,7 @@ Settings live in `~/.config/sndbx/settings.yml` (`$XDG_CONFIG_HOME/sndbx/` if se
 tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
 images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to this repo's images/
 docker_args: ["--security-opt=no-new-privileges", "--pids-limit=4096"] # optional, docker run arguments for every image
+proxy_image: ubuntu/squid@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029 # optional, turns the proxy on
 images:
   - name: claude
     tag: my-claude:latest # optional, defaults to <tag_prefix>:<name>
@@ -55,9 +56,31 @@ images:
   - name: codex
   - name: dsh
     ports: ["127.0.0.1:3080:3080"] # optional, always published; quote them
+    proxy: false # optional, keeps the image on the open network when proxy_image is set
+```
+
+To limit where sandboxes can connect, set `proxy_image` and list the allowed hosts in `~/.config/sndbx/allowed_hosts`, one per line. A leading `.` also allows subdomains:
+
+```
+# models
+.openai.com
+.chatgpt.com
+.anthropic.com
+.claude.ai
+.claude.com
+
+# code and packages
+.github.com
+.githubusercontent.com
+.npmjs.org
+.pypi.org
+.pythonhosted.org
+.rubygems.org
+.crates.io
 ```
 
 - **Hardening:** `no-new-privileges` stops processes from gaining privileges through setuid binaries like `su` or `sudo`, so the agent stays unprivileged; `sndbx exec -u root` still works. `--pids-limit` caps processes and threads, so a fork bomb fails in the sandbox, not on the host. Node, cargo and Chromium use many threads: raise it if builds fail with "Resource temporarily unavailable".
+- **Network:** while `proxy_image` is set, sandboxes run on the internal docker network `sndbx-internal`, which has no route out, and reach the network only through `sndbx-proxy`, a squid container from `proxy_image` that lets through HTTP on port 80 and HTTPS on port 443 to the listed hosts. `run` starts the proxy and creates the network when they aren't there, and sets `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` in the sandbox. Tools that ignore those just can't connect. Edits to `allowed_hosts` apply on the next `run`, and a new `proxy_image` replaces the proxy on it; an empty file denies everything, which suits a local model, and a missing one is an error. Pin the image by digest, like above, so every machine runs the squid you tested: `docker image inspect ubuntu/squid --format '{{index .RepoDigests 0}}'` prints it. Watch what gets through or denied with `docker exec sndbx-proxy tail -f /var/log/squid/access.log`; `docker logs sndbx-proxy` shows why the proxy doesn't start. Docker can't publish ports on an internal network, so an image with `ports` needs `proxy: false`, and so does one that needs another `--network`, which docker won't swap in for the internal one. An agent can still send data out through an allowed host, like a GitHub gist: this narrows exfiltration, it doesn't stop it. All proxied sandboxes on a docker host share the one proxy, so they all get the hosts and `proxy_image` of the latest `run`, also one with another `XDG_CONFIG_HOME` or `XDG_STATE_HOME`. To remove the proxy: `docker rm -f -v sndbx-proxy && docker network rm sndbx-internal`.
 - **`docker_args` order:** top-level first, then the image's, then `run -- ...`. For a flag that takes one value, like `--memory`, the last one wins; flags like `-e` or `--cap-add` add up.
 - **`user`** is only needed when the image runs as a numeric uid, whose home sndbx can't tell.
 - **`images_dir`** defaults to the repo the binary was built from. Set it if the repo moved or the binary was built elsewhere.
@@ -91,8 +114,9 @@ sndbx logs -n 50                                      # start with the last 50 l
 - publishes the image's `ports` plus each `-p PORT`
 - passes the top-level `docker_args`, then the image's, then everything after `--` to `docker run`
 - labels the container `sndbx.image=<name>`, which `exec`, `resume` and `list` find it by
+- with `proxy_image` set, runs it on `sndbx-internal` behind `sndbx-proxy`, unless the image has `proxy: false`, see **Network** above
 
-Every docker command sndbx runs is logged to `~/.local/state/sndbx/sndbx.log` (`$XDG_STATE_HOME/sndbx/` if set), which `sndbx logs` follows.
+Every docker command sndbx runs is logged to `~/.local/state/sndbx/sndbx.log` (`$XDG_STATE_HOME/sndbx/` if set), which `sndbx logs` follows. The proxy's config is there too: `squid.conf`, which the proxy mounts, and `squid.conf.loaded`, the last one it loaded.
 
 ## Build
 

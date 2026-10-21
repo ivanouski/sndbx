@@ -6,6 +6,7 @@ use anyhow::{anyhow, bail};
 
 use crate::docker::{self, IMAGE_LABEL, check_docker, image_user};
 use crate::paths::{expand_path, is_same_file, join, normalize};
+use crate::proxy::{self, Proxy};
 use crate::settings::{self, Image};
 use crate::{Result, paths};
 
@@ -19,6 +20,8 @@ pub struct Options {
     pub workdir: Option<String>,
     pub keep: bool,
     pub docker_args: Vec<String>,
+    /// The proxy the sandbox reaches the network through, `None` for the open network
+    pub proxy: Option<Proxy>,
 }
 
 struct Volume {
@@ -34,6 +37,7 @@ pub struct Sandbox {
     volumes: Vec<Volume>,
     ports: Vec<String>,
     workdir: Option<String>,
+    proxy: Option<Proxy>,
 }
 
 impl Sandbox {
@@ -54,6 +58,18 @@ impl Sandbox {
                 ports.push(port);
             }
         }
+        if options.proxy.is_some() && !ports.is_empty() {
+            let publisher = if image.ports.is_empty() {
+                "-p publishes ports".to_string()
+            } else {
+                format!("image '{}' publishes ports", image.name)
+            };
+            bail!(
+                "{publisher}, which a sandbox behind the proxy can't, set proxy: false for image '{}' in {}",
+                image.name,
+                settings::path().display()
+            );
+        }
 
         Ok(Self {
             image,
@@ -62,6 +78,7 @@ impl Sandbox {
             volumes,
             ports,
             workdir,
+            proxy: options.proxy,
         })
     }
 
@@ -70,10 +87,14 @@ impl Sandbox {
         let config_target = self.config_target()?;
         let workdir = self.check_workdir()?;
         std::fs::create_dir_all(&self.image.config_dir)?;
+        if let Some(proxy) = &self.proxy {
+            proxy::ensure(proxy)?;
+        }
 
         let label = format!("--label={IMAGE_LABEL}={}", self.image.name);
         let workdir_arg = format!("--workdir={workdir}");
         let volumes = self.volume_specs(&config_target);
+        let proxy_args = self.proxy_args();
 
         let mut args = vec!["run"];
         if !self.keep {
@@ -86,10 +107,29 @@ impl Sandbox {
         for port in &self.ports {
             args.extend(["-p", port]);
         }
+        args.extend(proxy_args.iter().map(String::as_str));
         args.extend(self.docker_args.iter().map(String::as_str));
         args.push(&self.image.tag);
 
         docker::exec(&args)
+    }
+
+    /// The internal network and the proxy's address for the tools that read it, none for the open network.
+    /// Before the docker args, so those can override the variables; a `--network` there doesn't replace
+    /// the internal network, docker refuses it or adds it, so a sandbox on another network sets `proxy: false`.
+    fn proxy_args(&self) -> Vec<String> {
+        if self.proxy.is_none() {
+            return Vec::new();
+        }
+        let url = proxy::url();
+        let mut args = vec![format!("--network={}", proxy::NETWORK)];
+        for variable in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
+            args.push(format!("--env={variable}={url}"));
+        }
+        for variable in ["NO_PROXY", "no_proxy"] {
+            args.push(format!("--env={variable}=localhost,127.0.0.1,::1"));
+        }
+        args
     }
 
     /// Each volume as docker's `SRC:DST[:OPTS]`, the image's config directory last

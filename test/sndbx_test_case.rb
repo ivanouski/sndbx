@@ -16,6 +16,9 @@ class SndbxTestCase < Minitest::Test
     images = File.exist?(images_path) ? File.readlines(images_path, chomp: true).to_h { |line| [line[/\\S+/], line[/ (.*)/, 1].to_s] } : {}
     containers_path = ENV.fetch('DOCKER_CONTAINERS')
     containers = File.exist?(containers_path) ? File.readlines(containers_path, chomp: true).map(&:split) : []
+    networks_path = ENV.fetch('DOCKER_NETWORKS')
+    networks = File.exist?(networks_path) ? File.readlines(networks_path, chomp: true).to_h(&:split) : {}
+    proxy_path = ENV.fetch('DOCKER_PROXY')
 
     case ARGV
     in ['info']
@@ -38,6 +41,30 @@ class SndbxTestCase < Minitest::Test
     in ['image', 'rm', tag]
       exit(false) if ENV['DOCKER_BROKEN'] == tag || !images.key?(tag)
       File.write(images_path, images.except(tag).map { |name, user| "\#{name} \#{user}\\n" }.join)
+    in ['network', 'inspect', '--format', '{{.Internal}}', name]
+      exit(false) unless networks.key?(name)
+      puts networks[name]
+    in ['network', 'create', '--internal', name]
+      File.write(networks_path, "\#{name} true\\n", mode: 'a')
+      puts 'cafe' * 16
+    in ['container', 'inspect', '--format', _, 'sndbx-proxy']
+      exit(false) unless File.exist?(proxy_path)
+      running, restarting, restarts, image, mount, *networks = File.read(proxy_path).split
+      puts running, restarting, restarts, image, networks.join(' '), mount
+    in ['run', '-d', '--name', 'sndbx-proxy', *]
+      exit(false) if ENV['DOCKER_BROKEN'] == 'sndbx-proxy'
+      state = ENV.key?('DOCKER_PROXY_CRASHES') ? 'true true 1' : 'true false 0'
+      mount = ARGV[ARGV.index('-v') + 1].split(':').first
+      File.write(proxy_path, "\#{state} \#{ARGV.last} \#{mount} bridge")
+      puts 'f00d' * 16
+    in ['network', 'connect', network, 'sndbx-proxy']
+      exit(false) if ENV['DOCKER_BROKEN'] == network
+      File.write(proxy_path, "\#{File.read(proxy_path)} \#{network}")
+    in ['exec', 'sndbx-proxy', 'squid', '-k', 'reconfigure']
+      exit(false) if ENV['DOCKER_BROKEN'] == 'reconfigure'
+      File.write(proxy_path, File.read(proxy_path).sub(/\\Atrue false 0/, 'true true 1')) if ENV.key?('DOCKER_PROXY_CRASHES')
+    in ['rm', '-f', 'sndbx-proxy']
+      File.delete(proxy_path)
     in ['build', *, '-t', tag, _]
       exit(false) if ENV['DOCKER_BROKEN'] == tag
       File.write(images_path, "\#{tag}\\n", mode: 'a')
@@ -51,6 +78,8 @@ class SndbxTestCase < Minitest::Test
     @docker_log = File.join(@root, 'docker.log')
     @docker_images = File.join(@root, 'docker-images')
     @docker_containers = File.join(@root, 'docker-containers')
+    @docker_networks = File.join(@root, 'docker-networks')
+    @docker_proxy = File.join(@root, 'docker-proxy')
 
     write_executable(File.join(@bin, 'docker'), FAKE_DOCKER)
   end
@@ -62,7 +91,9 @@ class SndbxTestCase < Minitest::Test
       'PATH' => docker ? @bin : @no_bin,
       'DOCKER_LOG' => @docker_log,
       'DOCKER_IMAGES' => @docker_images,
-      'DOCKER_CONTAINERS' => @docker_containers
+      'DOCKER_CONTAINERS' => @docker_containers,
+      'DOCKER_NETWORKS' => @docker_networks,
+      'DOCKER_PROXY' => @docker_proxy
     }.merge(env))
   end
 

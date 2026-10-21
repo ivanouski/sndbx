@@ -1,7 +1,9 @@
+mod allowlist;
 mod builder;
 mod commands;
 mod docker;
 mod paths;
+mod proxy;
 mod sandbox;
 mod settings;
 

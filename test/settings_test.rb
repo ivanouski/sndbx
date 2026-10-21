@@ -165,15 +165,22 @@ class SettingsTest < SndbxTestCase
     write_settings(tag_prefx: 'mine', images: [])
 
     assert_settings_error 'unknown field `tag_prefx`, expected one of `tag_prefix`, `images_dir`, `docker_args`, ' \
-                          '`images`',
+                          '`proxy_image`, `images`',
                           sndbx('list', 'configured')
+  end
+
+  # An empty HOME is fine, Rust takes the home from the user database then
+  def test_home_must_be_absolute
+    write_claude_settings
+
+    assert_error 'HOME is not set to an absolute path', sndbx('list', 'configured', env: { 'HOME' => 'relative' })
   end
 
   def test_unknown_image_key
     write_settings(images: [{ name: 'claude', user: 'ubuntu', docker_arg: ['--memory=8g'] }])
 
     assert_settings_error 'images[0]: unknown field `docker_arg`, expected one of `name`, `user`, `tag`, ' \
-                          '`config_dir`, `config_target`, `ports`, `docker_args`',
+                          '`config_dir`, `config_target`, `ports`, `docker_args`, `proxy`',
                           sndbx('run', 'claude')
   end
 end

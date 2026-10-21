@@ -4,6 +4,10 @@
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
+use anyhow::bail;
+
+use crate::Result;
+
 pub fn home() -> PathBuf {
     std::env::home_dir().unwrap_or_default()
 }
@@ -14,6 +18,20 @@ pub fn xdg_dir(variable: &str, fallback: &str) -> PathBuf {
         .map(PathBuf::from)
         .filter(|dir| dir.is_absolute())
         .unwrap_or_else(|| home().join(fallback))
+}
+
+/// sndbx's state, like its log
+pub fn state_dir() -> PathBuf {
+    xdg_dir("XDG_STATE_HOME", ".local/state").join("sndbx")
+}
+
+/// Fails when `$HOME` is relative, or unset with no home in the user database: the XDG fallbacks and `~`
+/// would be relative to wherever sndbx runs
+pub fn check_home() -> Result<()> {
+    if !home().is_absolute() {
+        bail!("HOME is not set to an absolute path");
+    }
+    Ok(())
 }
 
 pub fn current_dir() -> PathBuf {

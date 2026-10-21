@@ -19,6 +19,8 @@ const EXAMPLE: &str = "\
 # images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to the sndbx repo's images/
 # optional, docker run arguments for every image, before the image's own; these two harden the sandbox, see the README
 docker_args: ['--security-opt=no-new-privileges', '--pids-limit=4096']
+# optional, runs sandboxes behind a proxy that lets through only the hosts in ~/.config/sndbx/allowed_hosts, see the README
+# proxy_image: ubuntu/squid@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
 images:
   - name: claude
     # user: ubuntu # optional, whose home config_target is in, defaults to the user the image runs as
@@ -27,6 +29,7 @@ images:
     # config_target: .claude # optional, relative to the user's home, defaults to .<name>
     # ports: ['3000'] # optional, always published; quote them
     # docker_args: ['--memory=8g'] # optional, extra docker run arguments, after the top-level ones
+    # proxy: false # optional, keeps the image off the proxy that proxy_image turns on
 ";
 
 pub fn dir() -> PathBuf {
@@ -47,6 +50,8 @@ pub struct Image {
     pub config_target: String,
     pub ports: Vec<String>,
     pub docker_args: Vec<String>,
+    /// Whether the image reaches the network through the proxy when `proxy_image` turns it on
+    pub proxy: bool,
 }
 
 /// The settings file as written, an unknown key is an error, likely a misspelled one
@@ -60,6 +65,9 @@ struct File {
     /// For every image, before the image's own
     #[serde(deserialize_with = "strings")]
     docker_args: Vec<String>,
+    /// The proxy's image, which turns the proxy on
+    #[serde(deserialize_with = "optional_text")]
+    proxy_image: Option<String>,
     images: Option<Vec<Entry>>,
 }
 
@@ -80,6 +88,8 @@ struct Entry {
     ports: Vec<String>,
     #[serde(default, deserialize_with = "strings")]
     docker_args: Vec<String>,
+    #[serde(default)]
+    proxy: Option<bool>,
 }
 
 /// What `add_image` did
@@ -157,6 +167,7 @@ impl Settings {
                 .chain(&entry.docker_args)
                 .cloned()
                 .collect(),
+            proxy: entry.proxy.unwrap_or(true),
         })
     }
 
@@ -198,6 +209,11 @@ impl Settings {
         }
     }
 
+    /// The proxy's image, `None` when the proxy is off
+    pub fn proxy_image(&self) -> Option<&str> {
+        self.file.proxy_image.as_deref()
+    }
+
     fn images(&self) -> &[Entry] {
         self.file.images.as_deref().unwrap_or_default()
     }
@@ -224,6 +240,13 @@ fn validate(content: &str, path: &Path) -> Result<Settings> {
         );
     }
 
+    if file.proxy_image.as_deref().is_some_and(|image| !is_valid_image(image)) {
+        bail!(
+            "invalid {}: proxy_image must be an image like ubuntu/squid",
+            path.display()
+        );
+    }
+
     Ok(Settings { file })
 }
 
@@ -238,6 +261,11 @@ fn parse(content: &str) -> Result<File, serde_norway::Error> {
         return Ok(File::default());
     };
     Ok(Option::<File>::deserialize(document)?.unwrap_or_default())
+}
+
+/// Something docker can take as an image: not empty, no whitespace, no `-` first that would make it an option
+fn is_valid_image(image: &str) -> bool {
+    !image.is_empty() && !image.starts_with('-') && !image.contains(char::is_whitespace)
 }
 
 /// Lowercase alphanumeric words joined by single `.`, `_`, `-` or `/`, like `sndbx` or `my.org/sndbx`

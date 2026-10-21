@@ -13,7 +13,7 @@ const DOCKER: &str = "docker";
 pub const IMAGE_LABEL: &str = "sndbx.image";
 
 pub fn log_path() -> PathBuf {
-    paths::xdg_dir("XDG_STATE_HOME", ".local/state").join("sndbx/sndbx.log")
+    paths::state_dir().join("sndbx.log")
 }
 
 pub fn check_docker() -> Result<()> {
@@ -39,6 +39,63 @@ pub fn image_user(tag: &str) -> Option<String> {
         .status
         .success()
         .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Whether the network is internal, without a route out, `None` if it doesn't exist
+pub fn network_internal(name: &str) -> Option<bool> {
+    let output = Command::new(DOCKER)
+        .args(["network", "inspect", "--format", "{{.Internal}}", name])
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim() == "true")
+}
+
+pub struct ContainerState {
+    /// Running and not waiting to restart after it exited
+    pub up: bool,
+    /// How often docker restarted it after it exited
+    pub restarts: u64,
+    /// The image as `docker run` was given it
+    pub image: String,
+    pub networks: Vec<String>,
+    /// The host paths mounted in it
+    pub mounts: Vec<String>,
+}
+
+/// A line each, as paths may have spaces: the state, the image, the networks, then a line per mount
+pub const CONTAINER_STATE_FORMAT: &str = "{{.State.Running}}\n{{.State.Restarting}}\n{{.RestartCount}}\n\
+                                          {{.Config.Image}}\n\
+                                          {{range $name, $network := .NetworkSettings.Networks}}{{$name}} {{end}}\n\
+                                          {{range .Mounts}}{{.Source}}\n{{end}}";
+
+/// The container's state, `None` if it doesn't exist
+pub fn container_state(name: &str) -> Option<ContainerState> {
+    let output = Command::new(DOCKER)
+        .args(["container", "inspect", "--format", CONTAINER_STATE_FORMAT, name])
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let output = String::from_utf8_lossy(&output.stdout);
+    let mut lines = output.lines();
+    let running = lines.next() == Some("true");
+    let restarting = lines.next() == Some("true");
+    let restarts = lines.next()?.parse().ok()?;
+    let image = lines.next()?.to_string();
+    let networks = lines.next()?.split_whitespace().map(ToString::to_string).collect();
+    Some(ContainerState {
+        up: running && !restarting,
+        restarts,
+        image,
+        networks,
+        mounts: lines.filter(|line| !line.is_empty()).map(ToString::to_string).collect(),
+    })
 }
 
 pub fn running_containers(image: &str) -> Result<Vec<String>> {
@@ -99,10 +156,20 @@ pub fn exec<S: AsRef<str>>(args: &[S]) -> Result<()> {
 
 /// Runs docker and waits for it, whether it succeeded
 pub fn run<S: AsRef<str>>(args: &[S]) -> bool {
+    run_with_stdout(args, Stdio::inherit())
+}
+
+/// Runs docker like `run` without its output, like the ID `docker run -d` prints; its errors still show
+pub fn run_muted<S: AsRef<str>>(args: &[S]) -> bool {
+    run_with_stdout(args, Stdio::null())
+}
+
+fn run_with_stdout<S: AsRef<str>>(args: &[S], stdout: Stdio) -> bool {
     log_command(args);
     let _ = std::io::stdout().flush();
     Command::new(DOCKER)
         .args(args.iter().map(AsRef::as_ref))
+        .stdout(stdout)
         .status()
         .is_ok_and(|status| status.success())
 }

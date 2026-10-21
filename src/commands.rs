@@ -10,9 +10,10 @@ use crate::builder::{BASE_NAME, Builder, IMAGES_DIR_SETTING};
 use crate::docker::{
     self, check_container, check_docker, image_containers, image_exists, running_containers, stopped_containers,
 };
+use crate::proxy::Proxy;
 use crate::sandbox::{MOUNT_ROOT, Options, Sandbox};
 use crate::settings::{self, Settings};
-use crate::{Result, print_line};
+use crate::{Result, allowlist, paths, print_line};
 
 /// The usage first, like sndbx's help always had it
 const HELP_TEMPLATE: &str = "{usage-heading} {usage}\n\n{all-args}{after-help}";
@@ -265,6 +266,7 @@ pub fn cli() -> Result<()> {
         let _ = command().write_help(&mut out);
         return Ok(());
     };
+    paths::check_home()?;
 
     match subcommand {
         Commands::Run(args) => run(args),
@@ -278,13 +280,22 @@ pub fn cli() -> Result<()> {
 }
 
 fn run(args: Run) -> Result<()> {
-    let image = Settings::load()?.image(&args.image)?;
+    let settings = Settings::load()?;
+    let image = settings.image(&args.image)?;
+    let proxy = match settings.proxy_image() {
+        Some(proxy_image) if image.proxy => Some(Proxy {
+            image: proxy_image.to_string(),
+            allowed_hosts: allowlist::load()?,
+        }),
+        _ => None,
+    };
     let options = Options {
         volumes: args.volumes,
         ports: args.ports,
         workdir: args.workdir,
         keep: args.keep,
         docker_args: args.docker_args,
+        proxy,
     };
     Sandbox::new(image, options)?.run()
 }
