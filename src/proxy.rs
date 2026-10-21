@@ -1,5 +1,5 @@
 //! The proxy that proxied sandboxes reach the network through: they are on an internal network
-//! with no route out, and the proxy, also on the default one, lets through only the allowed hosts
+//! with no route out, and the proxy, also on the default one, lets through only the allowed hosts, or every one
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -50,7 +50,15 @@ fn loaded_config_path() -> PathBuf {
 /// The proxy a sandbox runs behind
 pub struct Proxy {
     pub image: String,
-    pub allowed_hosts: Vec<String>,
+    pub hosts: Hosts,
+}
+
+/// The hosts the proxy lets through
+pub enum Hosts {
+    /// Every one but the proxy's own and link-local ones, like a cloud's metadata service
+    All,
+    /// Only these, none when it's empty
+    Listed(Vec<String>),
 }
 
 /// How squid's config file compares to what the proxy runs with
@@ -64,7 +72,7 @@ enum Config {
 
 /// Starts the proxy and its network unless they're there, or updates its hosts
 pub fn ensure(proxy: &Proxy) -> Result<()> {
-    let content = config(&proxy.allowed_hosts);
+    let content = config(&proxy.hosts);
     let config = write_config(&content)?;
     create_network()?;
     let (state, loaded) = start(&proxy.image, &config)?;
@@ -188,16 +196,20 @@ fn start_error() -> String {
 
 /// Squid's config: HTTP to port 80 and HTTPS to port 443 only, only to the hosts, no cache. Requests go to squid's own
 /// access log, its `proxy` user can't open the container's stdout.
-fn config(hosts: &[String]) -> String {
+fn config(hosts: &Hosts) -> String {
     // Squid refuses an acl without values. With -n, squid matches only the host the request names, without it
     // the reverse DNS name of an IP too, which whoever runs the IP chooses, like x.github.com.
-    let (acl, allow) = if hosts.is_empty() {
-        (String::new(), "")
-    } else {
-        (
+    let (acl, allow) = match hosts {
+        // Squid's built-in acls, which match the address the host resolves to
+        Hosts::All => (
+            String::new(),
+            "http_access deny to_localhost\nhttp_access deny to_linklocal\nhttp_access allow all\n",
+        ),
+        Hosts::Listed(hosts) if hosts.is_empty() => (String::new(), ""),
+        Hosts::Listed(hosts) => (
             format!("acl allowed dstdomain -n {}\n", hosts.join(" ")),
             "http_access allow allowed\n",
-        )
+        ),
     };
     format!(
         "http_port {PORT}\nacl SSL_ports port 443\nacl Safe_ports port 80 443\n{acl}\
@@ -213,7 +225,7 @@ mod tests {
     #[test]
     fn configs() {
         assert_eq!(
-            config(&[".openai.com".to_string(), "pypi.org".to_string()]),
+            config(&Hosts::Listed(vec![".openai.com".to_string(), "pypi.org".to_string()])),
             "http_port 3128\n\
              acl SSL_ports port 443\n\
              acl Safe_ports port 80 443\n\
@@ -228,8 +240,25 @@ mod tests {
 
     #[test]
     fn denies_all_without_hosts() {
-        let config = config(&[]);
+        let config = config(&Hosts::Listed(Vec::new()));
         assert!(!config.contains("allowed"), "{config}");
         assert!(config.contains("http_access deny all\n"), "{config}");
+    }
+
+    #[test]
+    fn allows_every_host_on_the_ports() {
+        assert_eq!(
+            config(&Hosts::All),
+            "http_port 3128\n\
+             acl SSL_ports port 443\n\
+             acl Safe_ports port 80 443\n\
+             http_access deny !Safe_ports\n\
+             http_access deny CONNECT !SSL_ports\n\
+             http_access deny to_localhost\n\
+             http_access deny to_linklocal\n\
+             http_access allow all\n\
+             http_access deny all\n\
+             cache deny all\n"
+        );
     }
 }

@@ -18,7 +18,7 @@ pub fn load() -> Result<Vec<String>> {
     if !path.exists() {
         bail!(
             "no {}, list the hosts sandboxes behind the proxy may reach there, one per line, \
-             or remove proxy_image from {}",
+             or remove proxy from {}",
             path.display(),
             settings::path().display()
         );

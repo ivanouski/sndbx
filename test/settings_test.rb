@@ -165,7 +165,7 @@ class SettingsTest < SndbxTestCase
     write_settings(tag_prefx: 'mine', images: [])
 
     assert_settings_error 'unknown field `tag_prefx`, expected one of `tag_prefix`, `images_dir`, `docker_args`, ' \
-                          '`proxy_image`, `images`',
+                          '`proxy`, `images`',
                           sndbx('list', 'configured')
   end
 

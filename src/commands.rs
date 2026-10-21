@@ -10,9 +10,9 @@ use crate::builder::{BASE_NAME, Builder};
 use crate::docker::{
     self, check_container, check_docker, image_containers, image_exists, running_containers, stopped_containers,
 };
-use crate::proxy::Proxy;
+use crate::proxy::{Hosts, Proxy};
 use crate::sandbox::{MOUNT_ROOT, Options, Sandbox};
-use crate::settings::{self, IMAGES_DIR_SETTING, Settings};
+use crate::settings::{self, Allow, IMAGES_DIR_SETTING, Settings};
 use crate::{Result, allowlist, paths, print_line, print_status, unique};
 
 /// The usage first, like sndbx's help always had it
@@ -284,10 +284,13 @@ pub fn cli() -> Result<()> {
 fn run(args: Run) -> Result<()> {
     let settings = Settings::load()?;
     let image = settings.image(&args.image)?;
-    let proxy = match settings.proxy_image() {
-        Some(proxy_image) if image.proxy => Some(Proxy {
-            image: proxy_image.to_string(),
-            allowed_hosts: allowlist::load()?,
+    let proxy = match settings.proxy() {
+        Some(proxy) if image.proxy => Some(Proxy {
+            image: proxy.image.clone(),
+            hosts: match proxy.allow {
+                Allow::Listed => Hosts::Listed(allowlist::load()?),
+                Allow::All => Hosts::All,
+            },
         }),
         _ => None,
     };

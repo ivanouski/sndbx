@@ -36,6 +36,11 @@ pub fn optional_text<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Optio
     Ok(Option::<Text>::deserialize(deserializer)?.map(|Text(text)| text))
 }
 
+/// The value, the default when it's null
+pub fn or_default<'de, D: Deserializer<'de>, T: Deserialize<'de> + Default>(deserializer: D) -> Result<T, D::Error> {
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 /// A list of strings, or one string, none when it's null
 pub fn strings<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<String>, D::Error> {
     struct StringsVisitor;

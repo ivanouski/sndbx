@@ -11,7 +11,7 @@ class ProxyTest < SndbxTestCase
     *%w[NO_PROXY no_proxy].map { |variable| "--env=#{variable}=localhost,127.0.0.1,::1" }
   ].freeze
 
-  def test_run_without_proxy_image_has_no_proxy
+  def test_run_without_proxy_settings_has_no_proxy
     write_claude_settings
     write_allowed_hosts(".openai.com\n")
 
@@ -118,7 +118,7 @@ class ProxyTest < SndbxTestCase
     write_proxy_settings
     write_allowed_hosts(".openai.com\n")
     sndbx('run', 'claude')
-    write_proxy_settings(proxy_image: 'ubuntu/squid:6.13')
+    write_proxy_settings(image: 'ubuntu/squid:6.13')
     File.delete(@docker_log)
 
     sndbx('run', 'claude')
@@ -132,17 +132,62 @@ class ProxyTest < SndbxTestCase
     write_proxy_settings
 
     assert_error "no #{allowed_hosts_path}, list the hosts sandboxes behind the proxy may reach there, " \
-                 "one per line, or remove proxy_image from #{settings_path}",
+                 "one per line, or remove proxy from #{settings_path}",
                  sndbx('run', 'claude')
     refute File.exist?(@docker_log)
   end
 
   def test_an_invalid_proxy_image
     ['', ' ubuntu/squid', 'ubuntu/squid latest', '--privileged'].each do |image|
-      write_settings(proxy_image: image, images: [{ name: 'claude' }])
+      write_settings(proxy: { image: image }, images: [{ name: 'claude' }])
 
-      assert_error "invalid #{settings_path}: proxy_image must be an image like ubuntu/squid", sndbx('run', 'claude')
+      assert_error "invalid #{settings_path}: proxy.image must be an image like ubuntu/squid", sndbx('run', 'claude')
     end
+  end
+
+  def test_proxy_image_moved_under_proxy
+    write_settings_file("proxy_image: #{SQUID_IMAGE}\nimages:\n  - name: claude\n")
+
+    assert_error "invalid #{settings_path}: proxy_image is now proxy: { image: ... }, see the README",
+                 sndbx('run', 'claude')
+  end
+
+  def test_allow_all_lets_every_host_through_without_an_allowlist
+    write_proxy_settings(allow: 'all')
+
+    assert_predicate sndbx('run', 'claude'), :success?
+    config = File.read(squid_conf)
+    assert_includes config, "http_access deny to_linklocal\nhttp_access allow all\n"
+    refute_includes config, 'dstdomain'
+    assert_equal PROXY_ARGS, docker_calls.last[-8..-2]
+  end
+
+  def test_allow_all_ignores_the_allowlist
+    write_proxy_settings(allow: 'all')
+    write_allowed_hosts("open ai.com\n")
+
+    assert_predicate sndbx('run', 'claude'), :success?
+    refute_includes File.read(squid_conf), 'dstdomain'
+  end
+
+  def test_switching_to_allow_all_reconfigures_the_proxy
+    write_proxy_settings
+    write_allowed_hosts(".openai.com\n")
+    sndbx('run', 'claude')
+    write_proxy_settings(allow: 'all')
+    File.delete(@docker_log)
+
+    sndbx('run', 'claude')
+
+    assert_equal [network_inspect, proxy_inspect,
+                  %w[exec sndbx-proxy squid -k reconfigure], proxy_inspect],
+                 proxy_calls
+  end
+
+  def test_an_unknown_allow
+    write_proxy_settings(allow: 'any')
+
+    assert_settings_error 'proxy.allow: unknown variant `any`, expected `listed` or `all`', sndbx('run', 'claude')
   end
 
   def test_a_proxy_with_another_config_file_is_replaced
@@ -262,7 +307,7 @@ class ProxyTest < SndbxTestCase
   end
 
   def test_an_image_can_opt_out
-    write_settings(proxy_image: SQUID_IMAGE, images: [{ name: 'claude', proxy: false }])
+    write_settings(proxy: { image: SQUID_IMAGE }, images: [{ name: 'claude', proxy: false }])
     add_docker_image('sndbx:claude')
     write_allowed_hosts(".openai.com\n")
 
@@ -273,14 +318,14 @@ class ProxyTest < SndbxTestCase
   end
 
   def test_a_proxied_image_can_not_publish_ports
-    write_settings(proxy_image: SQUID_IMAGE, images: [{ name: 'claude', ports: ['3000'] }])
+    write_settings(proxy: { image: SQUID_IMAGE }, images: [{ name: 'claude', ports: ['3000'] }])
     add_docker_image('sndbx:claude')
     write_allowed_hosts(".openai.com\n")
 
     assert_error "image 'claude' publishes ports, which a sandbox behind the proxy can't, " \
                  "set proxy: false for image 'claude' in #{settings_path}",
                  sndbx('run', 'claude')
-    write_settings(proxy_image: SQUID_IMAGE, images: [{ name: 'claude' }])
+    write_settings(proxy: { image: SQUID_IMAGE }, images: [{ name: 'claude' }])
     assert_error "-p publishes ports, which a sandbox behind the proxy can't, " \
                  "set proxy: false for image 'claude' in #{settings_path}",
                  sndbx('run', 'claude', '-p', '3000')
@@ -303,7 +348,7 @@ class ProxyTest < SndbxTestCase
   end
 
   def test_proxy_must_be_a_boolean
-    write_settings(proxy_image: SQUID_IMAGE, images: [{ name: 'claude', proxy: 'no' }])
+    write_settings(proxy: { image: SQUID_IMAGE }, images: [{ name: 'claude', proxy: 'no' }])
 
     result = sndbx('run', 'claude')
 
@@ -342,8 +387,8 @@ class ProxyTest < SndbxTestCase
      '-v', "#{squid_conf}:/etc/squid/squid.conf:ro", image]
   end
 
-  def write_proxy_settings(proxy_image: SQUID_IMAGE)
-    write_settings(proxy_image: proxy_image, images: [{ name: 'claude' }])
+  def write_proxy_settings(image: SQUID_IMAGE, **proxy)
+    write_settings(proxy: { image: image, **proxy }, images: [{ name: 'claude' }])
     add_docker_image('sndbx:claude')
   end
 

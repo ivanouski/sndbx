@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use crate::paths::expand_path;
 use crate::{Abort, Result, paths};
-use de::{optional_text, strings, text};
+use de::{optional_text, or_default, strings, text};
 pub use edit::{Added, NewEntry, add_image, comment_out_image};
 
 /// The key of the directory build finds images in, which messages name
@@ -37,7 +37,7 @@ pub struct Image {
     pub config_target: String,
     pub ports: Vec<String>,
     pub docker_args: Vec<String>,
-    /// Whether the image reaches the network through the proxy when `proxy_image` turns it on
+    /// Whether the image reaches the network through the proxy when `proxy` turns it on
     pub proxy: bool,
 }
 
@@ -52,10 +52,30 @@ struct File {
     /// For every image, before the image's own
     #[serde(deserialize_with = "strings")]
     docker_args: Vec<String>,
-    /// The proxy's image, which turns the proxy on
-    #[serde(deserialize_with = "optional_text")]
-    proxy_image: Option<String>,
+    /// Turns the proxy on
+    proxy: Option<Proxy>,
     images: Option<Vec<Entry>>,
+}
+
+/// The proxy sandboxes reach the network through
+#[derive(Deserialize, Clone, PartialEq, Debug)]
+#[serde(deny_unknown_fields, expecting = "a mapping with an image")]
+pub struct Proxy {
+    #[serde(deserialize_with = "text")]
+    pub image: String,
+    #[serde(default, deserialize_with = "or_default")]
+    pub allow: Allow,
+}
+
+/// The hosts the proxy lets through
+#[derive(Deserialize, Clone, Copy, PartialEq, Debug, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Allow {
+    /// The ones in `allowed_hosts`
+    #[default]
+    Listed,
+    /// Every one, to watch what sandboxes reach without limiting it
+    All,
 }
 
 #[derive(Deserialize, Clone, PartialEq, Debug)]
@@ -190,9 +210,9 @@ impl Settings {
         }
     }
 
-    /// The proxy's image, `None` when the proxy is off
-    pub fn proxy_image(&self) -> Option<&str> {
-        self.file.proxy_image.as_deref()
+    /// The proxy, `None` when it's off
+    pub fn proxy(&self) -> Option<&Proxy> {
+        self.file.proxy.as_ref()
     }
 
     fn images(&self) -> &[Entry] {
@@ -208,7 +228,14 @@ fn read(path: &Path) -> Result<Settings> {
 
 /// The settings in `content`, read from `path`
 fn validate(content: &str, path: &Path) -> Result<Settings> {
-    let file = parse(content).with_context(|| format!("invalid {}", path.display()))?;
+    let file = match parse(content) {
+        // serde names the field without a path at the top level
+        Err(error) if error.to_string().starts_with("unknown field `proxy_image`") => bail!(
+            "invalid {}: proxy_image is now proxy: {{ image: ... }}, see the README",
+            path.display()
+        ),
+        file => file.with_context(|| format!("invalid {}", path.display()))?,
+    };
 
     if file
         .tag_prefix
@@ -221,9 +248,9 @@ fn validate(content: &str, path: &Path) -> Result<Settings> {
         );
     }
 
-    if file.proxy_image.as_deref().is_some_and(|image| !is_valid_image(image)) {
+    if file.proxy.as_ref().is_some_and(|proxy| !is_valid_image(&proxy.image)) {
         bail!(
-            "invalid {}: proxy_image must be an image like ubuntu/squid",
+            "invalid {}: proxy.image must be an image like ubuntu/squid",
             path.display()
         );
     }
@@ -314,6 +341,38 @@ mod tests {
     }
 
     #[test]
+    fn proxies() {
+        let proxy = |content| parse(content).unwrap().proxy;
+        assert_eq!(proxy("images: []\n"), None);
+        assert_eq!(proxy("proxy: ~\n"), None);
+        assert_eq!(
+            proxy("proxy:\n  image: squid\n"),
+            Some(Proxy {
+                image: "squid".to_string(),
+                allow: Allow::Listed
+            })
+        );
+        assert_eq!(
+            proxy("proxy:\n  image: squid\n  allow: all\n").unwrap().allow,
+            Allow::All
+        );
+        assert_eq!(
+            proxy("proxy:\n  image: squid\n  allow:\n").unwrap().allow,
+            Allow::Listed
+        );
+        let message = parse("proxy:\n  image: squid\n  allow: any\n")
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(
+            message.contains("proxy.allow: unknown variant `any`, expected `listed` or `all`"),
+            "{message}"
+        );
+        let message = parse("proxy:\n  allow: all\n").err().unwrap().to_string();
+        assert!(message.contains("proxy: missing field `image`"), "{message}");
+    }
+
+    #[test]
     fn unknown_keys() {
         let message = parse("image: []\n").err().unwrap().to_string();
         assert!(message.contains("unknown field `image`"), "{message}");
@@ -334,6 +393,7 @@ mod tests {
             "images:\n  - name: true\n",
             "tag_prefix: 1\n",
             "docker_args: [8]\n",
+            "proxy:\n  image: 1\n",
         ] {
             let message = parse(invalid).err().unwrap().to_string();
             assert!(message.contains("expected a string"), "{invalid:?}: {message}");
