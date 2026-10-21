@@ -4,7 +4,7 @@
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
 
-use anyhow::bail;
+use anyhow::{Context, bail};
 
 use crate::Result;
 
@@ -32,6 +32,18 @@ pub fn check_home() -> Result<()> {
         bail!("HOME is not set to an absolute path");
     }
     Ok(())
+}
+
+pub fn read_file(path: &Path) -> Result<String> {
+    std::fs::read_to_string(path).with_context(|| format!("can't read {}", path.display()))
+}
+
+/// Writes the file in place, which follows a symlink and keeps its permissions, creating its directory
+pub fn write_file(path: &Path, content: &str) -> Result<()> {
+    path.parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| std::fs::write(path, content))
+        .with_context(|| format!("can't write {}", path.display()))
 }
 
 pub fn current_dir() -> PathBuf {

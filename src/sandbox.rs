@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail};
 
-use crate::docker::{self, IMAGE_LABEL, check_docker, image_user};
+use crate::docker::{self, IMAGE_LABEL, image_user};
 use crate::paths::{expand_path, is_same_file, join, normalize};
 use crate::proxy::{self, Proxy};
 use crate::settings::{self, Image};
@@ -36,7 +36,7 @@ pub struct Sandbox {
     docker_args: Vec<String>,
     volumes: Vec<Volume>,
     ports: Vec<String>,
-    workdir: Option<String>,
+    workdir: String,
     proxy: Option<Proxy>,
 }
 
@@ -50,6 +50,7 @@ impl Sandbox {
             Some(name) => Some(workdir_target(&name)),
             None => default_workdir(&volumes),
         };
+        let workdir = check_workdir(&volumes, workdir.as_deref().unwrap_or_default())?;
 
         let mut ports: Vec<String> = Vec::new();
         for port in image.ports.iter().chain(&options.ports) {
@@ -82,17 +83,20 @@ impl Sandbox {
         })
     }
 
+    pub fn image(&self) -> &Image {
+        &self.image
+    }
+
+    /// Runs the sandbox, once docker is checked and the image built
     pub fn run(&self) -> Result<()> {
-        check_docker()?;
         let config_target = self.config_target()?;
-        let workdir = self.check_workdir()?;
         std::fs::create_dir_all(&self.image.config_dir)?;
         if let Some(proxy) = &self.proxy {
             proxy::ensure(proxy)?;
         }
 
         let label = format!("--label={IMAGE_LABEL}={}", self.image.name);
-        let workdir_arg = format!("--workdir={workdir}");
+        let workdir_arg = format!("--workdir={}", self.workdir);
         let volumes = self.volume_specs(&config_target);
         let proxy_args = self.proxy_args();
 
@@ -162,25 +166,24 @@ impl Sandbox {
         };
         Ok(join(&[&home, &self.image.config_target]))
     }
+}
 
-    fn check_workdir(&self) -> Result<&str> {
-        let targets = directory_targets(&self.volumes);
-        if targets.is_empty() {
-            bail!("no directory volume to start in");
-        }
-
-        let workdir = self.workdir.as_deref().unwrap_or_default();
-        if targets.contains(&workdir) {
-            return Ok(workdir);
-        }
-
-        let names: Vec<&str> = targets.iter().map(|target| workdir_name(target)).collect();
-        bail!(
-            "workdir '{}' is not a directory volume, expected one of: {}",
-            workdir_name(workdir),
-            names.join(", ")
-        )
+/// The workdir when it's a directory volume's target, the sandbox starts in one
+fn check_workdir(volumes: &[Volume], workdir: &str) -> Result<String> {
+    let targets = directory_targets(volumes);
+    if targets.is_empty() {
+        bail!("no directory volume to start in");
     }
+    if targets.contains(&workdir) {
+        return Ok(workdir.to_string());
+    }
+
+    let names: Vec<&str> = targets.iter().map(|target| workdir_name(target)).collect();
+    bail!(
+        "workdir '{}' is not a directory volume, expected one of: {}",
+        workdir_name(workdir),
+        names.join(", ")
+    )
 }
 
 /// The home of `user`, a name or `name:group` like docker's `--user`, empty for root; `None` for a uid

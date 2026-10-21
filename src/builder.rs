@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 
-use anyhow::{Context, bail};
+use anyhow::{Context, anyhow, bail};
 
 use crate::docker::{self, check_docker, image_exists};
-use crate::settings::{self, Added, Settings};
+use crate::settings::{self, Added, Image, Settings};
 use crate::{Result, print_line};
 
 pub const BASE_NAME: &str = "base";
@@ -29,9 +29,7 @@ impl Builder {
         let mut names: Vec<String> = std::fs::read_dir(&self.images_dir)?
             .filter_map(std::result::Result::ok)
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
-            .filter(|name| {
-                !name.starts_with('.') && name != BASE_NAME && self.image_dir(name).join("Dockerfile").exists()
-            })
+            .filter(|name| name != BASE_NAME && self.is_image_dir(name))
             .collect();
         names.sort();
         Ok(names)
@@ -56,16 +54,60 @@ impl Builder {
         }
 
         check_docker()?;
-        if rebuild_base {
-            self.docker_build(BASE_NAME)?;
-        } else if self.any_needs_base(&images)? && !self.base_exists() {
-            print_line(&format!("==> {} doesn't exist yet", self.tag_for(BASE_NAME)));
-            self.docker_build(BASE_NAME)?;
-        }
-
+        self.build_base(&images, rebuild_base)?;
         for name in images {
             self.docker_build(name)?;
             self.add_to_settings(name);
+        }
+        Ok(())
+    }
+
+    /// Builds the image `run` runs when it doesn't exist yet and build makes its tag, from the directory
+    /// the tag names, which may be another image's; otherwise explains why it can't
+    pub fn build_missing(&self, image: &Image) -> Result<()> {
+        if image_exists(&image.tag) {
+            return Ok(());
+        }
+        let name = self.image_dir_for(&image.tag).map_err(|reason| {
+            anyhow!(
+                "docker image '{}' that {} runs doesn't exist, and sndbx can't build it: {reason:#}. \
+                 Pull or build it yourself, or change {}'s tag in {}",
+                image.tag,
+                image.name,
+                image.name,
+                settings::path().display()
+            )
+        })?;
+
+        print_line(&format!("==> {} doesn't exist yet, building it", image.tag));
+        self.build_base(&[name], false)?;
+        self.docker_build(name)
+    }
+
+    /// The directory in `images_dir` build makes the tag from, base too
+    fn image_dir_for<'a>(&self, tag: &'a str) -> Result<&'a str> {
+        self.check_images_dir()?;
+        let prefix = format!("{}:", self.tag_prefix);
+        let Some(name) = tag.strip_prefix(&prefix).filter(|name| is_dir_name(name)) else {
+            bail!(
+                "it only builds {} from {}",
+                self.tag_for("<name>"),
+                self.image_dir("<name>").display()
+            );
+        };
+        if !self.has_dockerfile(name) {
+            bail!("there's no {}", self.image_dir(name).join("Dockerfile").display());
+        }
+        Ok(name)
+    }
+
+    /// Builds base if `rebuild_base`, or if one of the images needs it and it doesn't exist yet
+    fn build_base(&self, images: &[&str], rebuild_base: bool) -> Result<()> {
+        if rebuild_base {
+            self.docker_build(BASE_NAME)?;
+        } else if self.any_needs_base(images)? && !self.base_exists() {
+            print_line(&format!("==> {} doesn't exist yet", self.tag_for(BASE_NAME)));
+            self.docker_build(BASE_NAME)?;
         }
         Ok(())
     }
@@ -137,6 +179,15 @@ impl Builder {
         self.images_dir.join(name)
     }
 
+    /// Whether `name` is a directory in `images_dir` with a Dockerfile, not a hidden or nested one
+    fn is_image_dir(&self, name: &str) -> bool {
+        is_dir_name(name) && self.has_dockerfile(name)
+    }
+
+    fn has_dockerfile(&self, name: &str) -> bool {
+        self.image_dir(name).join("Dockerfile").exists()
+    }
+
     fn check_images_dir(&self) -> Result<()> {
         if self.images_dir.is_dir() {
             return Ok(());
@@ -148,6 +199,11 @@ impl Builder {
             settings::path().display()
         )
     }
+}
+
+/// Whether `name` can be an image's directory in `images_dir`: not empty, hidden or nested
+fn is_dir_name(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with('.') && !name.contains('/')
 }
 
 /// Whether a line of the Dockerfile is `FROM ${TAG_PREFIX}:base`, maybe followed by `AS <name>`

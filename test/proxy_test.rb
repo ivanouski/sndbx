@@ -17,7 +17,8 @@ class ProxyTest < SndbxTestCase
 
     sndbx('run', 'claude')
 
-    assert_equal [['info'], ['image', 'inspect', '--format', '{{.Config.User}}', 'sndbx:claude']],
+    assert_equal [['info'], %w[image inspect sndbx:claude],
+                  ['image', 'inspect', '--format', '{{.Config.User}}', 'sndbx:claude']],
                  docker_calls[0..-2]
     refute File.exist?(squid_conf)
   end

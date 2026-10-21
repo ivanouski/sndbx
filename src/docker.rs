@@ -30,28 +30,12 @@ pub fn image_exists(tag: &str) -> bool {
 
 /// The user the image runs as, like `ubuntu` or `1000:1000`, empty for root, `None` if the image doesn't exist
 pub fn image_user(tag: &str) -> Option<String> {
-    let output = Command::new(DOCKER)
-        .args(["image", "inspect", "--format", "{{.Config.User}}", tag])
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+    output(&["image", "inspect", "--format", "{{.Config.User}}", tag]).map(|user| user.trim().to_string())
 }
 
 /// Whether the network is internal, without a route out, `None` if it doesn't exist
 pub fn network_internal(name: &str) -> Option<bool> {
-    let output = Command::new(DOCKER)
-        .args(["network", "inspect", "--format", "{{.Internal}}", name])
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim() == "true")
+    output(&["network", "inspect", "--format", "{{.Internal}}", name]).map(|internal| internal.trim() == "true")
 }
 
 pub struct ContainerState {
@@ -74,16 +58,8 @@ pub const CONTAINER_STATE_FORMAT: &str = "{{.State.Running}}\n{{.State.Restartin
 
 /// The container's state, `None` if it doesn't exist
 pub fn container_state(name: &str) -> Option<ContainerState> {
-    let output = Command::new(DOCKER)
-        .args(["container", "inspect", "--format", CONTAINER_STATE_FORMAT, name])
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let output = String::from_utf8_lossy(&output.stdout);
-    let mut lines = output.lines();
+    let state = output(&["container", "inspect", "--format", CONTAINER_STATE_FORMAT, name])?;
+    let mut lines = state.lines();
     let running = lines.next() == Some("true");
     let restarting = lines.next() == Some("true");
     let restarts = lines.next()?.parse().ok()?;
@@ -116,20 +92,14 @@ fn label_filter(image: &str) -> String {
 }
 
 fn containers(ps_args: &[&str]) -> Result<Vec<String>> {
-    let output = Command::new(DOCKER)
-        .arg("ps")
-        .args(ps_args)
-        .args(["--format", "{{.Names}}"])
-        .stderr(Stdio::null())
-        .output();
-
-    match output {
-        Ok(output) if output.status.success() => Ok(String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(ToString::to_string)
-            .collect()),
-        _ => bail!("failed to list containers"),
-    }
+    let args: Vec<&str> = std::iter::once("ps")
+        .chain(ps_args.iter().copied())
+        .chain(["--format", "{{.Names}}"])
+        .collect();
+    let Some(output) = output(&args) else {
+        bail!("failed to list containers");
+    };
+    Ok(output.lines().map(ToString::to_string).collect())
 }
 
 pub fn check_container(container: &str, containers: &[String], description: &str) -> Result<()> {
@@ -188,6 +158,15 @@ fn log_command<S: AsRef<str>>(args: &[S]) {
     if let Err(e) = written {
         eprintln!("Warning: can't write {}: {e}", path.display());
     }
+}
+
+/// What docker printed, without its errors, `None` if it failed or can't run at all
+fn output(args: &[&str]) -> Option<String> {
+    let output = Command::new(DOCKER).args(args).stderr(Stdio::null()).output().ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// Runs docker without its output: whether it succeeded, `None` if it can't run at all

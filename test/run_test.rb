@@ -18,8 +18,10 @@ class RunTest < SndbxTestCase
 
     sndbx('run', 'claude')
 
-    assert_equal [['info'], ['image', 'inspect', '--format', '{{.Config.User}}', 'sndbx:claude']],
-                 docker_calls.first(2)
+    assert_equal [['info'], %w[image inspect sndbx:claude],
+                  ['image', 'inspect', '--format', '{{.Config.User}}', 'sndbx:claude']],
+                 docker_calls.first(3)
+    assert_empty docker_builds
   end
 
   def test_run_mounts_the_config_in_the_home_of_the_user_the_image_runs_as
@@ -377,10 +379,103 @@ class RunTest < SndbxTestCase
     assert_error 'docker is not running', sndbx('run', 'claude', env: { 'DOCKER_STOPPED' => '1' })
   end
 
-  def test_run_with_missing_image
-    write_settings(images: [{ name: 'claude', user: 'ubuntu' }])
+  def test_run_builds_a_missing_image
+    write_build_settings(images: [{ name: 'claude', user: 'ubuntu' }])
+    settings = File.read(settings_path)
 
-    assert_error "docker image 'sndbx:claude' does not exist", sndbx('run', 'claude')
+    result = sndbx('run', 'claude')
+
+    assert_predicate result, :success?
+    assert_equal "==> sndbx:claude doesn't exist yet, building it\n", result.out.lines.first
+    assert_equal [build_call('base'), build_call('claude', base: true)], docker_builds
+    assert_equal 'sndbx:claude', docker_runs.last.last
+    assert_equal settings, File.read(settings_path)
+  end
+
+  def test_run_builds_the_image_its_tag_names
+    write_build_settings(images: [{ name: 'foo', tag: 'sndbx:plain', user: 'ubuntu' }])
+
+    assert_predicate sndbx('run', 'foo'), :success?
+    assert_equal [build_call('plain')], docker_builds
+    assert_equal 'sndbx:plain', docker_runs.last.last
+  end
+
+  def test_run_checks_the_options_before_building
+    write_build_settings(images: [{ name: 'plain' }])
+    missing = File.join(@root, 'missing')
+
+    assert_error "#{missing} does not exist", sndbx('run', 'plain', '-v', missing)
+    refute File.exist?(@docker_log)
+  end
+
+  def test_run_checks_the_workdir_before_building
+    write_build_settings(images: [{ name: 'plain' }])
+
+    assert_error "workdir 'nope' is not a directory volume, expected one of: project",
+                 sndbx('run', 'plain', '-w', 'nope')
+    refute File.exist?(@docker_log)
+  end
+
+  def test_run_stops_when_the_build_fails
+    write_build_settings(images: [{ name: 'plain' }])
+
+    assert_error 'failed to build sndbx:plain', sndbx('run', 'plain', env: { 'DOCKER_BROKEN' => 'sndbx:plain' })
+    assert_empty docker_runs
+  end
+
+  def test_run_with_a_missing_image_of_another_tag
+    write_build_settings(images: [{ name: 'claude', tag: 'my-claude:latest' }])
+
+    assert_error "docker image 'my-claude:latest' that claude runs doesn't exist, and sndbx can't build it: " \
+                 "it only builds sndbx:<name> from #{@images_dir}/<name>. " \
+                 "Pull or build it yourself, or change claude's tag in #{settings_path}",
+                 sndbx('run', 'claude')
+    assert_empty docker_builds
+  end
+
+  def test_run_with_a_missing_image_without_a_dockerfile
+    write_build_settings(images: [{ name: 'codex' }])
+
+    assert_error "docker image 'sndbx:codex' that codex runs doesn't exist, and sndbx can't build it: " \
+                 "there's no #{@images_dir}/codex/Dockerfile. " \
+                 "Pull or build it yourself, or change codex's tag in #{settings_path}",
+                 sndbx('run', 'codex')
+    assert_empty docker_builds
+  end
+
+  def test_run_builds_base_for_its_tag
+    write_build_settings(images: [{ name: 'foo', tag: 'sndbx:base', user: 'ubuntu' }])
+
+    assert_predicate sndbx('run', 'foo'), :success?
+    assert_equal [build_call('base')], docker_builds
+    assert_equal 'sndbx:base', docker_runs.last.last
+  end
+
+  def test_run_with_a_missing_image_of_a_tag_that_names_no_image_directory
+    write_build_settings
+    write_dockerfile('', "FROM ubuntu\n")
+    write_dockerfile('.hidden', "FROM ubuntu\n")
+    write_dockerfile('plain/nested', "FROM ubuntu\n")
+
+    ['sndbx:', 'sndbx:.hidden', 'sndbx:plain/nested'].each do |tag|
+      write_build_settings(images: [{ name: 'claude', tag: tag }])
+
+      assert_error "docker image '#{tag}' that claude runs doesn't exist, and sndbx can't build it: " \
+                   "it only builds sndbx:<name> from #{@images_dir}/<name>. " \
+                   "Pull or build it yourself, or change claude's tag in #{settings_path}",
+                   sndbx('run', 'claude')
+    end
+    assert_empty docker_builds
+  end
+
+  def test_run_with_a_missing_image_and_images_dir
+    missing = File.join(@root, 'missing')
+    write_settings(images_dir: missing, images: [{ name: 'claude' }])
+
+    assert_error "docker image 'sndbx:claude' that claude runs doesn't exist, and sndbx can't build it: " \
+                 "images directory #{missing} does not exist, set images_dir in #{settings_path}. " \
+                 "Pull or build it yourself, or change claude's tag in #{settings_path}",
+                 sndbx('run', 'claude')
   end
 
   def test_run_needs_one_image

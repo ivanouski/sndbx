@@ -45,7 +45,9 @@ enum Commands {
         before_help = format!(
             "Runs a sandboxed image from {}.\n\
              Mounts the current directory unless a volume is mounted in {MOUNT_ROOT}.\n\
-             Passes DOCKER_ARGS to docker run after the docker_args in the settings.",
+             Passes DOCKER_ARGS to docker run after the docker_args in the settings.\n\
+             Builds the image first if it doesn't exist and `{IMAGES_DIR_SETTING}` has a Dockerfile for its tag; \
+             pull or build any other image yourself.",
             settings::path().display()
         )
     )]
@@ -297,7 +299,10 @@ fn run(args: Run) -> Result<()> {
         docker_args: args.docker_args,
         proxy,
     };
-    Sandbox::new(image, options)?.run()
+    let sandbox = Sandbox::new(image, options)?;
+    check_docker()?;
+    Builder::new(&settings).build_missing(sandbox.image())?;
+    sandbox.run()
 }
 
 fn build(args: &Build) -> Result<()> {

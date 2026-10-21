@@ -135,7 +135,7 @@ impl Settings {
     }
 
     pub fn image(&self, name: &str) -> Result<Image> {
-        let Some(entry) = self.images().iter().find(|entry| entry.name == name) else {
+        let Some(entry) = self.entry(name) else {
             bail!(
                 "unknown image '{name}', expected one of: {}",
                 self.image_names().join(", ")
@@ -176,12 +176,13 @@ impl Settings {
         entry.tag.clone().unwrap_or_else(|| tag(self.tag_prefix(), &entry.name))
     }
 
+    fn entry(&self, name: &str) -> Option<&Entry> {
+        self.images().iter().find(|entry| entry.name == name)
+    }
+
     /// The tag the image's entry runs, `None` when it has no entry
     pub fn configured_tag(&self, name: &str) -> Option<String> {
-        self.images()
-            .iter()
-            .find(|entry| entry.name == name)
-            .map(|entry| self.entry_tag(entry))
+        self.entry(name).map(|entry| self.entry_tag(entry))
     }
 
     /// The images whose entries run the tag
@@ -221,7 +222,7 @@ impl Settings {
 
 /// Reads and validates the settings file
 fn read(path: &Path) -> Result<Settings> {
-    let content = std::fs::read_to_string(path).with_context(|| format!("can't read {}", path.display()))?;
+    let content = paths::read_file(path)?;
     validate(&content, path)
 }
 
@@ -276,13 +277,7 @@ fn is_valid_tag_prefix(prefix: &str) -> bool {
 }
 
 fn create_example(path: &Path) -> Result<()> {
-    create(path, EXAMPLE)
-}
-
-fn create(path: &Path, content: &str) -> Result<()> {
-    std::fs::create_dir_all(dir())
-        .and_then(|()| std::fs::write(path, content))
-        .with_context(|| format!("can't create {}", path.display()))
+    paths::write_file(path, EXAMPLE)
 }
 
 /// Adds an entry for the image to the settings unless one has it already, appending it to the settings file
@@ -291,18 +286,17 @@ pub fn add_image(name: &str) -> Result<Added> {
     let path = path();
     let exists = path.exists();
     let content = if exists {
-        std::fs::read_to_string(&path).with_context(|| format!("can't read {}", path.display()))?
+        paths::read_file(&path)?
     } else {
         EXAMPLE.to_string()
     };
     let settings = validate(&content, &path)?;
 
     let tag = tag(settings.tag_prefix(), name);
-    let images = settings.images();
     let added = if !settings.names_running(&tag).is_empty() {
         Added::Already
-    } else if let Some(entry) = images.iter().find(|entry| entry.name == name) {
-        Added::OtherTag(settings.entry_tag(entry))
+    } else if let Some(other) = settings.configured_tag(name) {
+        Added::OtherTag(other)
     } else {
         Added::Appended
     };
@@ -313,7 +307,7 @@ pub fn add_image(name: &str) -> Result<Added> {
         _ => String::new(),
     };
     if !exists {
-        create(&path, &format!("{content}{addition}"))?;
+        paths::write_file(&path, &format!("{content}{addition}"))?;
         return Ok(Added::Created);
     }
     if !addition.is_empty() {
@@ -372,7 +366,7 @@ pub fn comment_out_image(name: &str) -> Result<bool> {
     if !path.exists() {
         return Ok(false);
     }
-    let content = std::fs::read_to_string(&path).with_context(|| format!("can't read {}", path.display()))?;
+    let content = paths::read_file(&path)?;
     let settings = validate(&content, &path)?;
     let Some(index) = settings.images().iter().position(|entry| entry.name == name) else {
         return Ok(false);
@@ -382,8 +376,7 @@ pub fn comment_out_image(name: &str) -> Result<bool> {
     let Some(commented) = commented_out(&settings.file, &content, index, &marker) else {
         bail!("can't tell where its entry in {} is", path.display());
     };
-    // Writing the file in place follows a symlink and keeps the file's permissions, unlike replacing it
-    std::fs::write(&path, commented).with_context(|| format!("can't write {}", path.display()))?;
+    paths::write_file(&path, &commented)?;
     Ok(true)
 }
 

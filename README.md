@@ -108,6 +108,7 @@ sndbx logs -n 50                                      # start with the last 50 l
 
 `sndbx run`:
 
+- builds the image first if it doesn't exist and `images_dir` has a Dockerfile for its tag, `<tag_prefix>:<dir>` from `images_dir/<dir>`; pull or build any other image yourself
 - mounts each `-v SRC[:DST[:OPTS]]` like `docker run -v`, at `/workspace/<basename>` when there's no `DST`
 - mounts the current directory at `/workspace/<basename>` unless a volume is mounted in `/workspace`
 - mounts the image's config directory at `/home/<user>/<config_target>`, where `<user>` is the one the image runs as, or `/root/<config_target>` for root

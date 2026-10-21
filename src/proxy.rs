@@ -58,7 +58,7 @@ pub fn ensure(proxy: &Proxy) -> Result<()> {
         check_up(state.restarts)?;
     }
     if config != Config::Loaded {
-        write(&loaded_config_path(), &content)?;
+        paths::write_file(&loaded_config_path(), &content)?;
     }
     Ok(())
 }
@@ -73,7 +73,7 @@ fn write_config(content: &str) -> Result<Config> {
     let current = std::fs::read_to_string(&path).ok();
     if current.as_deref() != Some(content) {
         // Written in place, the proxy's bind mount keeps the old file when it's replaced
-        write(&path, content)?;
+        paths::write_file(&path, content)?;
     }
     Ok(if current.is_none() {
         Config::Created
@@ -82,13 +82,6 @@ fn write_config(content: &str) -> Result<Config> {
     } else {
         Config::Changed
     })
-}
-
-fn write(path: &Path, content: &str) -> Result<()> {
-    path.parent()
-        .map_or(Ok(()), std::fs::create_dir_all)
-        .and_then(|()| std::fs::write(path, content))
-        .with_context(|| format!("can't write {}", path.display()))
 }
 
 fn create_network() -> Result<()> {

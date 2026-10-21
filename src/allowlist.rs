@@ -2,10 +2,10 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, bail};
+use anyhow::bail;
 
-use crate::Result;
 use crate::settings;
+use crate::{Result, paths};
 
 pub fn path() -> PathBuf {
     settings::dir().join("allowed_hosts")
@@ -23,7 +23,7 @@ pub fn load() -> Result<Vec<String>> {
             settings::path().display()
         );
     }
-    let content = std::fs::read_to_string(&path).with_context(|| format!("can't read {}", path.display()))?;
+    let content = paths::read_file(&path)?;
     parse(&content, &path)
 }
 
