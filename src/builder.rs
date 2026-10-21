@@ -3,11 +3,10 @@ use std::path::PathBuf;
 use anyhow::{Context, anyhow, bail};
 
 use crate::docker::{self, check_docker, image_exists};
-use crate::settings::{self, Added, Image, Settings};
+use crate::settings::{self, Added, IMAGES_DIR_SETTING, Image, Settings};
 use crate::{Result, print_status, unique};
 
 pub const BASE_NAME: &str = "base";
-pub const IMAGES_DIR_SETTING: &str = "images_dir";
 
 pub struct Builder {
     tag_prefix: String,

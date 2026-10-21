@@ -11,6 +11,8 @@ use crate::{Abort, Result, paths};
 use de::{optional_text, strings, text};
 pub use edit::{Added, add_image, comment_out_image, entry_yaml};
 
+/// The key of the directory build finds images in, which messages name
+pub const IMAGES_DIR_SETTING: &str = "images_dir";
 const DEFAULT_TAG_PREFIX: &str = "sndbx";
 // The images directory of the repo this binary was built from
 const REPO_IMAGES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/images");

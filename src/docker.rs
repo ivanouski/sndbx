@@ -118,8 +118,7 @@ pub fn check_container(container: &str, containers: &[String], description: &str
 
 /// Replaces sndbx with docker, returning only if docker can't run
 pub fn exec<S: AsRef<str>>(args: &[S]) -> Result<()> {
-    log_command(args);
-    let _ = std::io::stdout().flush();
+    prepare(args);
     let e = Command::new(DOCKER).args(args.iter().map(AsRef::as_ref)).exec();
     Err(e).context(format!("can't run {DOCKER}"))
 }
@@ -135,13 +134,18 @@ pub fn run_muted<S: AsRef<str>>(args: &[S]) -> bool {
 }
 
 fn run_with_stdout<S: AsRef<str>>(args: &[S], stdout: Stdio) -> bool {
-    log_command(args);
-    let _ = std::io::stdout().flush();
+    prepare(args);
     Command::new(DOCKER)
         .args(args.iter().map(AsRef::as_ref))
         .stdout(stdout)
         .status()
         .is_ok_and(|status| status.success())
+}
+
+/// Logs the command, and flushes what sndbx printed so it comes before docker's output
+fn prepare<S: AsRef<str>>(args: &[S]) {
+    log_command(args);
+    let _ = std::io::stdout().flush();
 }
 
 /// A log that can't be written doesn't stop the command

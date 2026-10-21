@@ -6,13 +6,13 @@ use anyhow::{Context, bail};
 use clap::builder::NonEmptyStringValueParser;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
-use crate::builder::{BASE_NAME, Builder, IMAGES_DIR_SETTING};
+use crate::builder::{BASE_NAME, Builder};
 use crate::docker::{
     self, check_container, check_docker, image_containers, image_exists, running_containers, stopped_containers,
 };
 use crate::proxy::Proxy;
 use crate::sandbox::{MOUNT_ROOT, Options, Sandbox};
-use crate::settings::{self, Settings};
+use crate::settings::{self, IMAGES_DIR_SETTING, Settings};
 use crate::{Result, allowlist, paths, print_line, print_status, unique};
 
 /// The usage first, like sndbx's help always had it
@@ -447,7 +447,9 @@ fn list(args: List) -> Result<()> {
             stopped_containers(&args.image)?
         }
     };
-    print_lines(&names);
+    for name in &names {
+        print_line(name);
+    }
     Ok(())
 }
 
@@ -467,12 +469,6 @@ fn logs(args: &Logs) -> Result<()> {
         bail!("{TAIL} is not installed");
     }
     Err(e).context(format!("can't run {TAIL}"))
-}
-
-fn print_lines(lines: &[String]) {
-    for line in lines {
-        print_line(line);
-    }
 }
 
 fn line_count(value: &str) -> Result<u64, String> {
