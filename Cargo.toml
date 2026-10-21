@@ -1,6 +1,6 @@
 [package]
 name = "sndbx"
-version = "0.31.3"
+version = "0.31.4"
 edition = "2024"
 description = "A small wrapper around docker run for running coding agents in a sandbox"
 license = "MIT"

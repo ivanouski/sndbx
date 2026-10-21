@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::bail;
 
 use crate::settings;
-use crate::{Result, paths};
+use crate::{Result, paths, unique};
 
 pub fn path() -> PathBuf {
     settings::dir().join("allowed_hosts")
@@ -43,10 +43,9 @@ fn parse(content: &str, path: &Path) -> Result<Vec<String>> {
                 index + 1
             );
         }
-        if !hosts.iter().any(|known| known == host) {
-            hosts.push(host.to_string());
-        }
+        hosts.push(host.to_string());
     }
+    let hosts = unique(hosts);
     Ok(hosts
         .iter()
         .filter(|host| !hosts.iter().any(|other| covers(other, host)))

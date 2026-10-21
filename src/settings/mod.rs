@@ -146,7 +146,12 @@ impl Settings {
 
     /// The tag the entry runs, its own or its name's default one
     fn entry_tag(&self, entry: &Entry) -> String {
-        entry.tag.clone().unwrap_or_else(|| tag(self.tag_prefix(), &entry.name))
+        entry.tag.clone().unwrap_or_else(|| self.default_tag(&entry.name))
+    }
+
+    /// The tag an image runs without a tag of its own, `<tag_prefix>:<name>`
+    pub fn default_tag(&self, name: &str) -> String {
+        tag(self.tag_prefix(), name)
     }
 
     fn entry(&self, name: &str) -> Option<&Entry> {

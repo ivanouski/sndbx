@@ -117,36 +117,43 @@ fn create_network() -> Result<()> {
 fn start(image: &str, config: &Config) -> Result<(ContainerState, bool)> {
     match container_state(CONTAINER) {
         Some(state) if state.up && state.image == image && mounts_config(&state) && *config != Config::Created => {
-            let changed = *config == Config::Changed;
-            if changed && !docker::run_muted(&["exec", CONTAINER, "squid", "-k", "reconfigure"]) {
-                bail!(start_error());
-            }
-            Ok((state, changed))
+            Ok((state, reload(config)?))
         }
-        state => {
-            // A stopped proxy may be on a network that was removed since, which keeps it from starting,
-            // one that keeps restarting doesn't run, one from another image isn't the configured one,
-            // and one that mounts another config file, like from another XDG_STATE_HOME, or one that's gone
-            // can't load the new one, so they're all replaced
-            // With its anonymous volumes, the squid image's log and cache, which would pile up otherwise
-            if state.is_some() && !docker::run_muted(&["rm", "-f", "-v", CONTAINER]) {
-                bail!("can't remove the proxy {CONTAINER} to replace it");
-            }
-            let volume = format!("{}:{CONFIG_TARGET}:ro", config_path().display());
-            let restart = "--restart=unless-stopped";
-            if !docker::run_muted(&["run", "-d", "--name", CONTAINER, restart, "-v", &volume, image]) {
-                bail!(start_error());
-            }
-            let state = ContainerState {
-                up: true,
-                restarts: 0,
-                image: image.to_string(),
-                networks: vec![EGRESS_NETWORK.to_string()],
-                mounts: vec![config_path().display().to_string()],
-            };
-            Ok((state, true))
-        }
+        // A stopped proxy may be on a network that was removed since, which keeps it from starting,
+        // one that keeps restarting doesn't run, one from another image isn't the configured one,
+        // and one that mounts another config file, like from another XDG_STATE_HOME, or one that's gone
+        // can't load the new one, so they're all replaced
+        state => Ok((replace(state.is_some(), image)?, true)),
     }
+}
+
+/// Has the running proxy reload its config when it changed, whether it did
+fn reload(config: &Config) -> Result<bool> {
+    let changed = *config == Config::Changed;
+    if changed && !docker::run_muted(&["exec", CONTAINER, "squid", "-k", "reconfigure"]) {
+        bail!(start_error());
+    }
+    Ok(changed)
+}
+
+/// Runs the proxy from `image`, after removing the one there is when `exists`, its state as it starts
+fn replace(exists: bool, image: &str) -> Result<ContainerState> {
+    // With its anonymous volumes, the squid image's log and cache, which would pile up otherwise
+    if exists && !docker::run_muted(&["rm", "-f", "-v", CONTAINER]) {
+        bail!("can't remove the proxy {CONTAINER} to replace it");
+    }
+    let volume = format!("{}:{CONFIG_TARGET}:ro", config_path().display());
+    let restart = "--restart=unless-stopped";
+    if !docker::run_muted(&["run", "-d", "--name", CONTAINER, restart, "-v", &volume, image]) {
+        bail!(start_error());
+    }
+    Ok(ContainerState {
+        up: true,
+        restarts: 0,
+        image: image.to_string(),
+        networks: vec![EGRESS_NETWORK.to_string()],
+        mounts: vec![config_path().display().to_string()],
+    })
 }
 
 fn mounts_config(state: &ContainerState) -> bool {

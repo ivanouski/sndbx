@@ -5,8 +5,8 @@ use std::io::Write;
 
 use anyhow::{Context, anyhow, bail};
 
-use super::{EXAMPLE, Entry, File, parse, path, tag, validate};
-use crate::{Result, paths};
+use super::{EXAMPLE, Entry, File, parse, path, validate};
+use crate::{Result, paths, unique};
 
 /// What `add_image` did
 pub enum Added {
@@ -32,7 +32,7 @@ pub fn add_image(name: &str) -> Result<Added> {
     };
     let settings = validate(&content, &path)?;
 
-    let tag = tag(settings.tag_prefix(), name);
+    let tag = settings.default_tag(name);
     let added = if !settings.names_running(&tag).is_empty() {
         Added::Already
     } else if let Some(other) = settings.configured_tag(name) {
@@ -84,13 +84,11 @@ fn addition(file: &File, content: &str, name: &str) -> Option<String> {
     };
     let entry = entry_yaml(name);
     let list_indents = content.lines().rev().filter_map(list_item_indent);
-    let mut candidates: Vec<String> = Vec::new();
-    for indent in list_indents.chain([2, 0]) {
-        let candidate = format!("{}{entry}", " ".repeat(indent));
-        if !candidates.contains(&candidate) {
-            candidates.push(candidate);
-        }
-    }
+    let mut candidates = unique(
+        list_indents
+            .chain([2, 0])
+            .map(|indent| format!("{}{entry}", " ".repeat(indent))),
+    );
     candidates.push(format!("images:\n  {entry}"));
 
     candidates

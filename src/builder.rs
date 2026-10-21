@@ -4,7 +4,7 @@ use anyhow::{Context, anyhow, bail};
 
 use crate::docker::{self, check_docker, image_exists};
 use crate::settings::{self, Added, Image, Settings};
-use crate::{Result, print_line};
+use crate::{Result, print_status, unique};
 
 pub const BASE_NAME: &str = "base";
 pub const IMAGES_DIR_SETTING: &str = "images_dir";
@@ -40,7 +40,6 @@ impl Builder {
     /// so it runs right away
     pub fn build(&self, names: &[String], rebuild_base: bool) -> Result<()> {
         let known = self.image_names()?;
-        let mut images: Vec<&str> = Vec::new();
         for name in names {
             if name == BASE_NAME {
                 bail!("{BASE_NAME} is built with --rebuild-base");
@@ -48,10 +47,8 @@ impl Builder {
             if !known.contains(name) {
                 bail!("unknown image '{name}', expected one of: {}", known.join(", "));
             }
-            if !images.contains(&name.as_str()) {
-                images.push(name);
-            }
         }
+        let images = unique(names.iter().map(String::as_str));
 
         check_docker()?;
         self.build_base(&images, rebuild_base)?;
@@ -79,7 +76,7 @@ impl Builder {
             )
         })?;
 
-        print_line(&format!("==> {} doesn't exist yet, building it", image.tag));
+        print_status(&format!("{} doesn't exist yet, building it", image.tag));
         self.build_base(&[name], false)?;
         self.docker_build(name)
     }
@@ -96,7 +93,7 @@ impl Builder {
             );
         };
         if !self.has_dockerfile(name) {
-            bail!("there's no {}", self.image_dir(name).join("Dockerfile").display());
+            bail!("there's no {}", self.dockerfile(name).display());
         }
         Ok(name)
     }
@@ -106,7 +103,7 @@ impl Builder {
         if rebuild_base {
             self.docker_build(BASE_NAME)?;
         } else if self.any_needs_base(images)? && !self.base_exists() {
-            print_line(&format!("==> {} doesn't exist yet", self.tag_for(BASE_NAME)));
+            print_status(&format!("{} doesn't exist yet", self.tag_for(BASE_NAME)));
             self.docker_build(BASE_NAME)?;
         }
         Ok(())
@@ -124,7 +121,7 @@ impl Builder {
         }
         args.extend(["-t", &tag, &image_dir]);
 
-        print_line(&format!("==> Building {tag} from {image_dir}"));
+        print_status(&format!("Building {tag} from {image_dir}"));
         if !docker::run(&args) {
             bail!("failed to build {tag}");
         }
@@ -132,7 +129,7 @@ impl Builder {
     }
 
     fn needs_base(&self, name: &str) -> Result<bool> {
-        let path = self.image_dir(name).join("Dockerfile");
+        let path = self.dockerfile(name);
         let dockerfile = std::fs::read(&path).with_context(|| format!("can't read {}", path.display()))?;
         Ok(is_from_base(&String::from_utf8_lossy(&dockerfile)))
     }
@@ -160,13 +157,13 @@ impl Builder {
         let hint = format!("set config_target there if {name} doesn't keep its config in ~/.{name}");
         match settings::add_image(name) {
             Ok(Added::Already) => {}
-            Ok(Added::OtherTag(tag)) => print_line(&format!(
-                "==> {name} in {} runs {tag}, not {}",
+            Ok(Added::OtherTag(tag)) => print_status(&format!(
+                "{name} in {} runs {tag}, not {}",
                 path.display(),
                 self.tag_for(name)
             )),
-            Ok(Added::Appended) => print_line(&format!("==> Added {name} to {}, {hint}", path.display())),
-            Ok(Added::Created) => print_line(&format!("==> Created {} with {name}, {hint}", path.display())),
+            Ok(Added::Appended) => print_status(&format!("Added {name} to {}, {hint}", path.display())),
+            Ok(Added::Created) => print_status(&format!("Created {} with {name}, {hint}", path.display())),
             Err(e) => eprint!(
                 "Warning: can't add {name} to the settings: {e:#}.\nAdd it to the images in {}:\n  {}",
                 path.display(),
@@ -184,8 +181,12 @@ impl Builder {
         is_dir_name(name) && self.has_dockerfile(name)
     }
 
+    fn dockerfile(&self, name: &str) -> PathBuf {
+        self.image_dir(name).join("Dockerfile")
+    }
+
     fn has_dockerfile(&self, name: &str) -> bool {
-        self.image_dir(name).join("Dockerfile").exists()
+        self.dockerfile(name).exists()
     }
 
     fn check_images_dir(&self) -> Result<()> {

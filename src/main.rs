@@ -31,6 +31,22 @@ pub fn print_line(line: &str) {
     let _ = writeln!(out, "{line}");
 }
 
+/// Prints what sndbx is doing, marked off from the output of the docker commands it runs
+pub fn print_status(message: &str) {
+    print_line(&format!("==> {message}"));
+}
+
+/// The items without the repeated ones, in the order they first appear
+pub fn unique<T: PartialEq>(items: impl IntoIterator<Item = T>) -> Vec<T> {
+    let mut unique = Vec::new();
+    for item in items {
+        if !unique.contains(&item) {
+            unique.push(item);
+        }
+    }
+    unique
+}
+
 fn main() -> ExitCode {
     let Err(e) = commands::cli() else {
         return ExitCode::SUCCESS;
@@ -42,4 +58,15 @@ fn main() -> ExitCode {
         None => eprintln!("Error: {e:#}."),
     }
     ExitCode::FAILURE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unique_keeps_the_first_of_each() {
+        assert_eq!(unique(["b", "a", "b", "c", "a"]), ["b", "a", "c"]);
+        assert_eq!(unique(Vec::<&str>::new()), Vec::<&str>::new());
+    }
 }

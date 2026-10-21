@@ -13,7 +13,7 @@ use crate::docker::{
 use crate::proxy::Proxy;
 use crate::sandbox::{MOUNT_ROOT, Options, Sandbox};
 use crate::settings::{self, Settings};
-use crate::{Result, allowlist, paths, print_line};
+use crate::{Result, allowlist, paths, print_line, print_status, unique};
 
 /// The usage first, like sndbx's help always had it
 const HELP_TEMPLATE: &str = "{usage-heading} {usage}\n\n{all-args}{after-help}";
@@ -319,15 +319,10 @@ struct Removal<'a> {
 /// Checks every image before removing any, so a typo or a container stops `rm` before it changes anything
 fn rm(args: &Rm) -> Result<()> {
     let settings = Settings::load_or_default()?;
-    let mut names: Vec<&str> = Vec::new();
-    for name in &args.images {
-        if name == BASE_NAME {
-            bail!("{BASE_NAME} can't be removed, the other images are built on it");
-        }
-        if !names.contains(&name.as_str()) {
-            names.push(name);
-        }
+    if args.images.iter().any(|name| name == BASE_NAME) {
+        bail!("{BASE_NAME} can't be removed, the other images are built on it");
     }
+    let names = unique(args.images.iter().map(String::as_str));
 
     check_docker()?;
     let removals = names
@@ -341,9 +336,7 @@ fn rm(args: &Rm) -> Result<()> {
 /// runs its tag too, or containers use it
 fn check_removal<'a>(settings: &Settings, name: &'a str, names: &[&str]) -> Result<Removal<'a>> {
     let configured_tag = settings.configured_tag(name);
-    let tag = configured_tag
-        .clone()
-        .unwrap_or_else(|| settings::tag(settings.tag_prefix(), name));
+    let tag = configured_tag.clone().unwrap_or_else(|| settings.default_tag(name));
     let exists = image_exists(&tag);
     if configured_tag.is_none() && !exists {
         bail!(
@@ -382,9 +375,9 @@ fn remove_images(removals: &[Removal]) -> Result<()> {
                 if !docker::run(&["image", "rm", tag]) {
                     bail!("failed to remove {tag}");
                 }
-                print_line(&format!("==> Removed {tag}"));
+                print_status(&format!("Removed {tag}"));
             } else {
-                print_line(&format!("==> {tag} doesn't exist"));
+                print_status(&format!("{tag} doesn't exist"));
             }
             removed.push(tag);
         }
@@ -398,7 +391,7 @@ fn comment_out(name: &str) {
     let path = settings::path();
     match settings::comment_out_image(name) {
         Ok(false) => {}
-        Ok(true) => print_line(&format!("==> Commented out {name} in {}", path.display())),
+        Ok(true) => print_status(&format!("Commented out {name} in {}", path.display())),
         Err(e) => eprintln!(
             "Warning: can't comment out {name} in the settings: {e:#}.\nRemove its entry from {} yourself.",
             path.display()

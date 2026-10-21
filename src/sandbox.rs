@@ -8,7 +8,7 @@ use crate::docker::{self, IMAGE_LABEL, image_user};
 use crate::paths::{expand_path, is_same_file, join, normalize};
 use crate::proxy::{self, Proxy};
 use crate::settings::{self, Image};
-use crate::{Result, paths};
+use crate::{Result, paths, unique};
 
 pub const MOUNT_ROOT: &str = "/workspace";
 const HOME_ROOT: &str = "/home";
@@ -28,6 +28,16 @@ struct Volume {
     source: PathBuf,
     target: String,
     options: Option<String>,
+}
+
+impl Volume {
+    /// Docker's `SRC:DST[:OPTS]`
+    fn spec(&self) -> String {
+        match &self.options {
+            Some(options) => format!("{}:{}:{options}", self.source.display(), self.target),
+            None => format!("{}:{}", self.source.display(), self.target),
+        }
+    }
 }
 
 pub struct Sandbox {
@@ -52,25 +62,7 @@ impl Sandbox {
         };
         let workdir = check_workdir(&volumes, workdir.as_deref().unwrap_or_default())?;
 
-        let mut ports: Vec<String> = Vec::new();
-        for port in image.ports.iter().chain(&options.ports) {
-            let port = normalize_port(port)?;
-            if !ports.contains(&port) {
-                ports.push(port);
-            }
-        }
-        if options.proxy.is_some() && !ports.is_empty() {
-            let publisher = if image.ports.is_empty() {
-                "-p publishes ports".to_string()
-            } else {
-                format!("image '{}' publishes ports", image.name)
-            };
-            bail!(
-                "{publisher}, which a sandbox behind the proxy can't, set proxy: false for image '{}' in {}",
-                image.name,
-                settings::path().display()
-            );
-        }
+        let ports = ports(&image, &options.ports, options.proxy.is_some())?;
 
         Ok(Self {
             image,
@@ -125,14 +117,7 @@ impl Sandbox {
 
     /// Each volume as docker's `SRC:DST[:OPTS]`, the image's config directory last
     fn volume_specs(&self, config_target: &str) -> Vec<String> {
-        let mut specs: Vec<String> = self
-            .volumes
-            .iter()
-            .map(|volume| match &volume.options {
-                Some(options) => format!("{}:{}:{options}", volume.source.display(), volume.target),
-                None => format!("{}:{}", volume.source.display(), volume.target),
-            })
-            .collect();
+        let mut specs: Vec<String> = self.volumes.iter().map(Volume::spec).collect();
         specs.push(format!("{}:{config_target}", self.image.config_dir.display()));
         specs
     }
@@ -171,6 +156,32 @@ fn check_workdir(volumes: &[Volume], workdir: &str) -> Result<String> {
         workdir_name(workdir),
         names.join(", ")
     )
+}
+
+/// The image's ports and `extra`, the ones `-p` publishes, normalized and each once. A sandbox behind
+/// the proxy can't publish any.
+fn ports(image: &Image, extra: &[String], proxied: bool) -> Result<Vec<String>> {
+    let ports = unique(
+        image
+            .ports
+            .iter()
+            .chain(extra)
+            .map(|port| normalize_port(port))
+            .collect::<Result<Vec<_>>>()?,
+    );
+    if proxied && !ports.is_empty() {
+        let publisher = if image.ports.is_empty() {
+            "-p publishes ports".to_string()
+        } else {
+            format!("image '{}' publishes ports", image.name)
+        };
+        bail!(
+            "{publisher}, which a sandbox behind the proxy can't, set proxy: false for image '{}' in {}",
+            image.name,
+            settings::path().display()
+        );
+    }
+    Ok(ports)
 }
 
 /// The home of `user`, a name or `name:group` like docker's `--user`, empty for root; `None` for a uid
