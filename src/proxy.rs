@@ -9,7 +9,7 @@ use anyhow::{Context, bail};
 use crate::docker::{self, ContainerState, container_state, network_internal};
 use crate::{Result, paths};
 
-pub const NETWORK: &str = "sndbx-internal";
+const NETWORK: &str = "sndbx-internal";
 pub const CONTAINER: &str = "sndbx-proxy";
 const PORT: u16 = 3128;
 const CONFIG_TARGET: &str = "/etc/squid/squid.conf";
@@ -19,8 +19,23 @@ const EGRESS_NETWORK: &str = "bridge";
 const STARTUP_CHECK_DELAY: Duration = Duration::from_secs(1);
 
 /// The proxy's URL in the internal network
-pub fn url() -> String {
+fn url() -> String {
     format!("http://{CONTAINER}:{PORT}")
+}
+
+/// The `docker run` arguments that put a sandbox behind the proxy: the internal network, and the proxy's
+/// address for the tools that read it. A `--network` among the sandbox's docker args doesn't replace the
+/// internal network, docker refuses it or adds it, so a sandbox on another network sets `proxy: false`.
+pub fn run_args() -> Vec<String> {
+    let url = url();
+    let mut args = vec![format!("--network={NETWORK}")];
+    for variable in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
+        args.push(format!("--env={variable}={url}"));
+    }
+    for variable in ["NO_PROXY", "no_proxy"] {
+        args.push(format!("--env={variable}=localhost,127.0.0.1,::1"));
+    }
+    args
 }
 
 pub fn config_path() -> PathBuf {
