@@ -225,7 +225,9 @@ fn start_error() -> String {
 
 /// Squid's config: HTTP to port 80 and HTTPS to port 443 only, only to the hosts, no cache. Requests go to squid's own
 /// access log, its `proxy` user can't open the container's stdout, a line each with the time like sndbx's log, the
-/// sandbox's address, how squid handled it and the HTTP status, the method and the URL.
+/// sandbox's address, how squid handled it and the HTTP status, the method and the URL, then how long it took in
+/// milliseconds and the bytes the sandbox sent and got. Squid writes the line when the request ends, which for an
+/// HTTPS tunnel a client keeps open can be minutes after it started.
 fn config(hosts: &Hosts) -> String {
     // Squid refuses an acl without values. With -n, squid matches only the host the request names, without it
     // the reverse DNS name of an IP too, which whoever runs the IP chooses, like x.github.com.
@@ -245,7 +247,7 @@ fn config(hosts: &Hosts) -> String {
         "http_port {PORT}\nacl SSL_ports port 443\nacl Safe_ports port 80 443\n{acl}\
          http_access deny !Safe_ports\nhttp_access deny CONNECT !SSL_ports\n{allow}\
          http_access deny all\ncache deny all\n\
-         logformat sndbx %{{%FT%T%z}}tl %>a %Ss/%03>Hs %rm %ru\naccess_log {ACCESS_LOG} sndbx\n"
+         logformat sndbx %{{%FT%T%z}}tl %>a %Ss/%03>Hs %rm %ru %tr %>st %<st\naccess_log {ACCESS_LOG} sndbx\n"
     )
 }
 
@@ -266,7 +268,7 @@ mod tests {
              http_access allow allowed\n\
              http_access deny all\n\
              cache deny all\n\
-             logformat sndbx %{%FT%T%z}tl %>a %Ss/%03>Hs %rm %ru\n\
+             logformat sndbx %{%FT%T%z}tl %>a %Ss/%03>Hs %rm %ru %tr %>st %<st\n\
              access_log /var/log/squid/access.log sndbx\n"
         );
     }
@@ -292,7 +294,7 @@ mod tests {
              http_access allow all\n\
              http_access deny all\n\
              cache deny all\n\
-             logformat sndbx %{%FT%T%z}tl %>a %Ss/%03>Hs %rm %ru\n\
+             logformat sndbx %{%FT%T%z}tl %>a %Ss/%03>Hs %rm %ru %tr %>st %<st\n\
              access_log /var/log/squid/access.log sndbx\n"
         );
     }
