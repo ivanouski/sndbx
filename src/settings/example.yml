@@ -1,0 +1,15 @@
+# tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
+# images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to the sndbx repo's images/
+# optional, docker run arguments for every image, before the image's own; these two harden the sandbox, see the README
+docker_args: ['--security-opt=no-new-privileges', '--pids-limit=4096']
+# optional, runs sandboxes behind a proxy that lets through only the hosts in ~/.config/sndbx/allowed_hosts, see the README
+# proxy_image: ubuntu/squid@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
+images:
+  - name: claude
+    # user: ubuntu # optional, whose home config_target is in, defaults to the user the image runs as
+    # tag: my-claude:latest # optional, defaults to <tag_prefix>:<name>
+    # config_dir: ~/.claude_docker # optional, relative paths resolve against ~/.config/sndbx, defaults to ~/.config/sndbx/<name>
+    # config_target: .claude # optional, relative to the user's home, defaults to .<name>
+    # ports: ['3000'] # optional, always published; quote them
+    # docker_args: ['--memory=8g'] # optional, extra docker run arguments, after the top-level ones
+    # proxy: false # optional, keeps the image off the proxy that proxy_image turns on
