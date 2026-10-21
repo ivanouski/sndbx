@@ -51,7 +51,7 @@ pub struct ContainerState {
 }
 
 /// A line each, as paths may have spaces: the state, the image, the networks, then a line per mount
-pub const CONTAINER_STATE_FORMAT: &str = "{{.State.Running}}\n{{.State.Restarting}}\n{{.RestartCount}}\n\
+const CONTAINER_STATE_FORMAT: &str = "{{.State.Running}}\n{{.State.Restarting}}\n{{.RestartCount}}\n\
                                           {{.Config.Image}}\n\
                                           {{range $name, $network := .NetworkSettings.Networks}}{{$name}} {{end}}\n\
                                           {{range .Mounts}}{{.Source}}\n{{end}}";

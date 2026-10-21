@@ -10,7 +10,7 @@ use crate::docker::{self, ContainerState, container_state, network_internal};
 use crate::{Result, paths};
 
 const NETWORK: &str = "sndbx-internal";
-pub const CONTAINER: &str = "sndbx-proxy";
+const CONTAINER: &str = "sndbx-proxy";
 const PORT: u16 = 3128;
 const CONFIG_TARGET: &str = "/etc/squid/squid.conf";
 // Docker's default network, which the proxy reaches the hosts through
@@ -38,7 +38,7 @@ pub fn run_args() -> Vec<String> {
     args
 }
 
-pub fn config_path() -> PathBuf {
+fn config_path() -> PathBuf {
     paths::state_dir().join("squid.conf")
 }
 
