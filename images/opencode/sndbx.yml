@@ -1,0 +1,2 @@
+config_target: .config/opencode
+docker_args: ["--add-host=host.docker.internal:host-gateway"] # reaches Ollama on the host

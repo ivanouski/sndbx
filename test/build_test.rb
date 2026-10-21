@@ -143,8 +143,44 @@ class BuildTest < SndbxTestCase
 
     assert_predicate result, :success?
     assert_includes result.out, "==> Added plain to #{settings_path}, " \
-                                "set config_target there if plain doesn't keep its config in ~/.plain\n"
+                                "set config_target there or in #{File.join(@images_dir, 'plain', 'sndbx.yml')} " \
+                                "if plain doesn't keep its config in ~/.plain\n"
     assert_equal "plain\n", sndbx('list', 'configured').out
+  end
+
+  def test_build_adds_the_keys_from_the_entry_file
+    content = "images_dir: #{@images_dir}\nimages:\n  - name: codex\n"
+    write_build_settings
+    write_settings_file(content)
+    File.write(File.join(@images_dir, 'plain', 'sndbx.yml'),
+               "config_target: .config/plain\nports: ['127.0.0.1:3080:3080'] # mine\n")
+
+    result = sndbx('build', 'plain')
+
+    assert_includes result.out, "==> Added plain to #{settings_path}\n"
+    assert_equal "#{content}  - name: 'plain'\n    config_target: .config/plain\n    " \
+                 "ports: ['127.0.0.1:3080:3080'] # mine\n",
+                 File.read(settings_path)
+  end
+
+  def test_build_checks_the_entry_files_first
+    write_build_settings
+    path = File.join(@images_dir, 'claude', 'sndbx.yml')
+    File.write(path, "name: other\n")
+
+    assert_error "invalid #{path}: name is the image directory's", sndbx('build', 'plain', 'claude')
+    refute File.exist?(@docker_log)
+  end
+
+  def test_build_prints_the_entry_with_its_keys_when_it_cannot_add_it
+    content = "images_dir: #{@images_dir}\nimages: []\n"
+    write_build_settings
+    write_settings_file(content)
+    File.write(File.join(@images_dir, 'plain', 'sndbx.yml'), "proxy: false\n")
+
+    result = sndbx('build', 'plain')
+
+    assert result.err.end_with?(":\n  - name: 'plain'\n    proxy: false\n"), result.err
   end
 
   def test_build_adds_each_image

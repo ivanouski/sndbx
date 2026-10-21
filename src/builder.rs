@@ -3,10 +3,12 @@ use std::path::PathBuf;
 use anyhow::{Context, anyhow, bail};
 
 use crate::docker::{self, check_docker, image_exists};
-use crate::settings::{self, Added, IMAGES_DIR_SETTING, Image, Settings};
-use crate::{Result, print_status, unique};
+use crate::settings::{self, Added, IMAGES_DIR_SETTING, Image, NewEntry, Settings};
+use crate::{Result, paths, print_status, unique};
 
 pub const BASE_NAME: &str = "base";
+/// The file in an image's directory with the keys of the entry build adds, besides its name
+const ENTRY_FILE: &str = "sndbx.yml";
 
 pub struct Builder {
     tag_prefix: String,
@@ -49,14 +51,30 @@ impl Builder {
             }
         }
         let images = unique(names.iter().map(String::as_str));
+        // Before building, which takes a while, so a mistake in an entry file doesn't stop it halfway
+        let entries = images
+            .iter()
+            .map(|name| self.new_entry(name))
+            .collect::<Result<Vec<_>>>()?;
 
         check_docker()?;
         self.build_base(&images, rebuild_base)?;
-        for name in images {
-            self.docker_build(name)?;
-            self.add_to_settings(name);
+        for entry in &entries {
+            self.docker_build(entry.name())?;
+            self.add_to_settings(entry);
         }
         Ok(())
+    }
+
+    /// The entry build adds for the image, with the keys from its entry file when it has one
+    fn new_entry(&self, name: &str) -> Result<NewEntry> {
+        let path = self.entry_file(name);
+        let keys = if path.exists() {
+            paths::read_file(&path)?
+        } else {
+            String::new()
+        };
+        NewEntry::new(name, &keys, &path)
     }
 
     /// Builds the image `run` runs when it doesn't exist yet and build makes its tag, from the directory
@@ -152,22 +170,30 @@ impl Builder {
     }
 
     /// Adds a built image to the settings, only warning when it can't since the image was built
-    fn add_to_settings(&self, name: &str) {
+    fn add_to_settings(&self, entry: &NewEntry) {
+        let name = entry.name();
         let path = settings::path();
-        let hint = format!("set config_target there if {name} doesn't keep its config in ~/.{name}");
-        match settings::add_image(name) {
+        let hint = if entry.has_config_target() {
+            String::new()
+        } else {
+            format!(
+                ", set config_target there or in {} if {name} doesn't keep its config in ~/.{name}",
+                self.entry_file(name).display()
+            )
+        };
+        match settings::add_image(entry) {
             Ok(Added::Already) => {}
             Ok(Added::OtherTag(tag)) => print_status(&format!(
                 "{name} in {} runs {tag}, not {}",
                 path.display(),
                 self.tag_for(name)
             )),
-            Ok(Added::Appended) => print_status(&format!("Added {name} to {}, {hint}", path.display())),
-            Ok(Added::Created) => print_status(&format!("Created {} with {name}, {hint}", path.display())),
+            Ok(Added::Appended) => print_status(&format!("Added {name} to {}{hint}", path.display())),
+            Ok(Added::Created) => print_status(&format!("Created {} with {name}{hint}", path.display())),
             Err(e) => eprint!(
-                "Warning: can't add {name} to the settings: {e:#}.\nAdd it to the images in {}:\n  {}",
+                "Warning: can't add {name} to the settings: {e:#}.\nAdd it to the images in {}:\n{}",
                 path.display(),
-                settings::entry_yaml(name)
+                entry.item(2)
             ),
         }
     }
@@ -179,6 +205,10 @@ impl Builder {
     /// Whether `name` is a directory in `images_dir` with a Dockerfile, not a hidden or nested one
     fn is_image_dir(&self, name: &str) -> bool {
         is_dir_name(name) && self.has_dockerfile(name)
+    }
+
+    fn entry_file(&self, name: &str) -> PathBuf {
+        self.image_dir(name).join(ENTRY_FILE)
     }
 
     fn dockerfile(&self, name: &str) -> PathBuf {
@@ -232,5 +262,16 @@ mod tests {
         assert!(!is_from_base("FROM${TAG_PREFIX}:base\n"));
         assert!(!is_from_base(" FROM ${TAG_PREFIX}:base\n"));
         assert!(!is_from_base("# FROM ${TAG_PREFIX}:base\n"));
+    }
+
+    #[test]
+    fn the_repo_images_have_valid_entry_files() {
+        let builder = Builder::new(&Settings::default());
+        for name in builder.image_names().unwrap() {
+            if let Err(e) = builder.new_entry(&name) {
+                panic!("{e:#}");
+            }
+        }
+        assert!(builder.new_entry("opencode").unwrap().has_config_target());
     }
 }

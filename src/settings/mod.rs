@@ -9,7 +9,7 @@ use serde::Deserialize;
 use crate::paths::expand_path;
 use crate::{Abort, Result, paths};
 use de::{optional_text, strings, text};
-pub use edit::{Added, add_image, comment_out_image, entry_yaml};
+pub use edit::{Added, NewEntry, add_image, comment_out_image};
 
 /// The key of the directory build finds images in, which messages name
 pub const IMAGES_DIR_SETTING: &str = "images_dir";
@@ -58,7 +58,7 @@ struct File {
     images: Option<Vec<Entry>>,
 }
 
-#[derive(Deserialize, Default, Clone, PartialEq, Debug)]
+#[derive(Deserialize, Clone, PartialEq, Debug)]
 #[serde(deny_unknown_fields, expecting = "a mapping with a name")]
 struct Entry {
     #[serde(deserialize_with = "text")]

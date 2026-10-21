@@ -13,11 +13,11 @@ Docker images for running coding agents in a sandbox, plus `sndbx`, a small wrap
 
 All are built on `sndbx:base` (`images/base/`): Ubuntu with node, python, ruby, rust, uv and postgres via mise, and Playwright with headless Chromium.
 
-**opencode** keeps its config in `~/.config/opencode`, so its settings entry needs `config_target: .config/opencode`; with the default it would get its config mounted at `~/.opencode`, where it doesn't look. `images/opencode/opencode/opencode.json` is an example config for Ollama on the host; copy it into opencode's config directory. The container reaches the host with `--add-host=host.docker.internal:host-gateway`, and on Linux Ollama must listen beyond loopback, e.g. `OLLAMA_HOST=0.0.0.0 ollama serve`.
+**opencode** keeps its config in `~/.config/opencode`, so its settings entry needs `config_target: .config/opencode`, which `build` adds from `images/opencode/sndbx.yml`; with the default it would get its config mounted at `~/.opencode`, where it doesn't look. `images/opencode/opencode/opencode.json` is an example config for Ollama on the host; copy it into opencode's config directory. The container reaches the host with `--add-host=host.docker.internal:host-gateway`, and on Linux Ollama must listen beyond loopback, e.g. `OLLAMA_HOST=0.0.0.0 ollama serve`.
 
 **codex** sandboxes its commands with bubblewrap, which needs user namespaces that docker's default seccomp profile blocks, so the image starts it with `--sandbox danger-full-access` and the container is the sandbox.
 
-**dsh** refuses to listen on a wildcard address, so the image binds the container's own address, which a published port reaches. Publish it on `127.0.0.1` only: a plain `-p 3080:3080` lets anyone on your network control the agent.
+**dsh** refuses to listen on a wildcard address, so the image binds the container's own address, which a published port reaches. `images/dsh/sndbx.yml` publishes it on `127.0.0.1` only, keep it that way: a plain `-p 3080:3080` lets anyone on your network control the agent.
 
 ## Install
 
@@ -132,7 +132,7 @@ sndbx build -b                 # rebuild sndbx:base only
 
 - builds each image from `images/<name>/`, without the docker cache
 - builds `sndbx:base` first if an image needs it and it doesn't exist, or with `-b`
-- appends `- name: '<image>'` to the settings' `images` for an image that isn't there yet, so `sndbx run <image>` works right away; set `config_target` if the agent doesn't keep its config in `~/.<image>`
+- appends `- name: '<image>'` to the settings' `images` for an image that isn't there yet, so `sndbx run <image>` works right away, followed by the keys in `images/<image>/sndbx.yml` if it has one
 - prints the entry to add instead when it can't tell where to append
 
 To add an image, create `images/<name>/Dockerfile` starting with:
@@ -141,6 +141,15 @@ To add an image, create `images/<name>/Dockerfile` starting with:
 ARG TAG_PREFIX=sndbx
 FROM ${TAG_PREFIX}:base
 ```
+
+If it needs more than its name in the settings to run, like `ports` and `proxy` for a web UI, put those keys of its entry in `images/<name>/sndbx.yml`, everything but `name`, one per line:
+
+```yaml
+ports: ["127.0.0.1:3080:3080"]
+proxy: false
+```
+
+`build` checks the file before building and copies the keys into the entry it adds; later changes to the file don't reach an entry that's already there.
 
 ## Remove
 
