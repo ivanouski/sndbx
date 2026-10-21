@@ -1,23 +1,13 @@
 # sndbx
 
-Docker images for running coding agents in a sandbox, plus `sndbx`, a small wrapper around `docker run`.
+A lightweight sandbox for coding agents: one small binary that runs an agent's docker image as a container with your project mounted and the agent's config kept between runs. It has no daemon, VM or runtime of its own: sndbx puts together a `docker run`, logs it and runs it.
 
-## Images
+- **Just docker:** every sandbox is a plain container, so `docker ps`, `docker logs` and `docker exec` work on it. `sndbx logs` shows each docker command sndbx ran, and you can run one by hand, see [Run without sndbx](#run-without-sndbx).
+- **Small:** a single Rust binary with five dependencies, configured by one YAML file.
+- **Any image:** an entry in the settings is a name and a tag; sndbx mounts the workspace and the config directory and passes your `docker_args` through.
+- **Optional egress control:** a squid proxy limits sandboxes to the hosts you list, or lets every host through so you can watch what they reach.
 
-| Image      | Config in container             | Notes                                     |
-| ---------- | ------------------------------- | ----------------------------------------- |
-| `claude`   | `/home/ubuntu/.claude`          |                                           |
-| `opencode` | `/home/ubuntu/.config/opencode` | can use Ollama on the host, see below     |
-| `codex`    | `/home/ubuntu/.codex`           | runs without its own sandbox, see below   |
-| `dsh`      | `/home/ubuntu/.dsh`             | web UI on port 3080, publish on 127.0.0.1 |
-
-All are built on `sndbx:base` (`images/base/`): Ubuntu with node, python, ruby, rust, uv and postgres via mise, and Playwright with headless Chromium.
-
-**opencode** keeps its config in `~/.config/opencode`, so its settings entry needs `config_target: .config/opencode`, which `build` adds from `images/opencode/sndbx.yml`; with the default it would get its config mounted at `~/.opencode`, where it doesn't look. `images/opencode/opencode/opencode.json` is an example config for Ollama on the host; copy it into opencode's config directory. The container reaches the host with `--add-host=host.docker.internal:host-gateway`, and on Linux Ollama must listen beyond loopback, e.g. `OLLAMA_HOST=0.0.0.0 ollama serve`.
-
-**codex** sandboxes its commands with bubblewrap, which needs user namespaces that docker's default seccomp profile blocks, so the image starts it with `--sandbox danger-full-access` and the container is the sandbox.
-
-**dsh** refuses to listen on a wildcard address, so the image binds the container's own address, which a published port reaches. `images/dsh/sndbx.yml` publishes it on `127.0.0.1` only, keep it that way: a plain `-p 3080:3080` lets anyone on your network control the agent.
+As a bonus, the repo comes with Dockerfiles for Claude Code, opencode, Codex and dsh that `sndbx build` builds, see [Images](#images).
 
 ## Install
 
@@ -152,6 +142,23 @@ proxy: false
 ```
 
 `build` checks the file before building and copies the keys into the entry it adds; later changes to the file don't reach an entry that's already there.
+
+## Images
+
+| Image      | Config in container             | Notes                                     |
+| ---------- | ------------------------------- | ----------------------------------------- |
+| `claude`   | `/home/ubuntu/.claude`          |                                           |
+| `opencode` | `/home/ubuntu/.config/opencode` | can use Ollama on the host, see below     |
+| `codex`    | `/home/ubuntu/.codex`           | runs without its own sandbox, see below   |
+| `dsh`      | `/home/ubuntu/.dsh`             | web UI on port 3080, publish on 127.0.0.1 |
+
+`sndbx build` builds them from `images/`, all on `sndbx:base` (`images/base/`): Ubuntu with node, python, ruby, rust, uv and postgres via mise, and Playwright with headless Chromium.
+
+**opencode** keeps its config in `~/.config/opencode`, so its settings entry needs `config_target: .config/opencode`, which `build` adds from `images/opencode/sndbx.yml`; with the default it would get its config mounted at `~/.opencode`, where it doesn't look. `images/opencode/opencode/opencode.json` is an example config for Ollama on the host; copy it into opencode's config directory. The container reaches the host with `--add-host=host.docker.internal:host-gateway`, and on Linux Ollama must listen beyond loopback, e.g. `OLLAMA_HOST=0.0.0.0 ollama serve`.
+
+**codex** sandboxes its commands with bubblewrap, which needs user namespaces that docker's default seccomp profile blocks, so the image starts it with `--sandbox danger-full-access` and the container is the sandbox.
+
+**dsh** refuses to listen on a wildcard address, so the image binds the container's own address, which a published port reaches. `images/dsh/sndbx.yml` publishes it on `127.0.0.1` only, keep it that way: a plain `-p 3080:3080` lets anyone on your network control the agent.
 
 ## Remove
 
