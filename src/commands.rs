@@ -12,7 +12,7 @@ use crate::docker::{
 };
 use crate::proxy::{self, Hosts, Proxy};
 use crate::sandbox::{MOUNT_ROOT, Options, Sandbox};
-use crate::settings::{self, Allow, IMAGES_DIR_SETTING, Settings};
+use crate::settings::{self, Allow, IMAGES_DIR_SETTING, Image, Settings};
 use crate::{Result, allowlist, paths, print_line, print_status, unique};
 
 /// Usage first
@@ -295,8 +295,7 @@ pub fn cli() -> Result<()> {
     let matches = command().get_matches();
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     let Some(subcommand) = cli.command else {
-        let mut out = std::io::stdout().lock();
-        let _ = command().write_help(&mut out);
+        print_help(None);
         return Ok(());
     };
     paths::check_home()?;
@@ -315,28 +314,33 @@ pub fn cli() -> Result<()> {
 fn run(args: Run) -> Result<()> {
     let settings = Settings::load()?;
     let image = settings.image(&args.image)?;
-    let proxy = match settings.proxy() {
-        Some(proxy) if image.proxy => Some(Proxy {
-            image: proxy.image.clone(),
-            hosts: match proxy.allow {
-                Allow::Listed => Hosts::Listed(allowlist::load()?),
-                Allow::All => Hosts::All,
-            },
-        }),
-        _ => None,
-    };
     let options = Options {
         volumes: args.volumes,
         ports: args.ports,
         workdir: args.workdir,
         keep: args.keep,
         docker_args: args.docker_args,
-        proxy,
+        proxy: proxy_for(&settings, &image)?,
     };
     let sandbox = Sandbox::new(image, options)?;
     check_docker()?;
     Builder::new(&settings).build_missing(sandbox.image())?;
     sandbox.run()
+}
+
+/// `None` when the proxy is off or the image opts out
+fn proxy_for(settings: &Settings, image: &Image) -> Result<Option<Proxy>> {
+    let Some(proxy) = settings.proxy().filter(|_| image.proxy) else {
+        return Ok(None);
+    };
+    let hosts = match proxy.allow {
+        Allow::Listed => Hosts::Listed(allowlist::load()?),
+        Allow::All => Hosts::All,
+    };
+    Ok(Some(Proxy {
+        image: proxy.image.clone(),
+        hosts,
+    }))
 }
 
 fn build(args: &Build) -> Result<()> {
@@ -461,10 +465,7 @@ fn check_sandbox(image: &str, container: &str, state: &str, containers: fn(&str)
 fn list(args: List) -> Result<()> {
     let names = match args.what {
         None => {
-            let mut out = std::io::stdout().lock();
-            if let Some(list) = command().find_subcommand_mut("list") {
-                let _ = list.write_help(&mut out);
-            }
+            print_help(Some("list"));
             return Ok(());
         }
         Some(ListWhat::Configured) => Settings::load_or_default()?.image_names(),
@@ -487,10 +488,7 @@ fn list(args: List) -> Result<()> {
 fn logs(args: Logs) -> Result<()> {
     match args.what {
         None => {
-            let mut out = std::io::stdout().lock();
-            if let Some(logs) = command().find_subcommand_mut("logs") {
-                let _ = logs.write_help(&mut out);
-            }
+            print_help(Some("logs"));
             Ok(())
         }
         Some(LogsWhat::Commands(args)) => command_log(args.lines),
@@ -517,6 +515,16 @@ fn command_log(lines: u64) -> Result<()> {
         bail!("{TAIL} is not installed");
     }
     Err(e).context(format!("can't run {TAIL}"))
+}
+
+/// sndbx's help, or the subcommand's
+fn print_help(subcommand: Option<&str>) {
+    let mut command = command();
+    let command = match subcommand {
+        Some(name) => command.find_subcommand_mut(name).expect("a subcommand"),
+        None => &mut command,
+    };
+    let _ = command.write_help(&mut std::io::stdout().lock());
 }
 
 fn line_count(value: &str) -> Result<u64, String> {

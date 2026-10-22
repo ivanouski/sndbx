@@ -8,7 +8,7 @@ use anyhow::{Context, anyhow, bail};
 use serde::Deserialize;
 use serde_norway::{Mapping, Value};
 
-use super::{EXAMPLE, Entry, File, parse, path, validate};
+use super::{EXAMPLE, Entry, File, first_document, parse, path, validate};
 use crate::{Result, paths, unique};
 
 /// The entry build adds: the name, plus the keys from the image's entry file as written
@@ -21,7 +21,7 @@ impl NewEntry {
     /// `keys` are all of the entry's but `name`
     pub fn new(name: &str, keys: &str, path: &Path) -> Result<Self> {
         let invalid = || format!("invalid {}", path.display());
-        let mut mapping = parse_keys(keys).with_context(invalid)?;
+        let mut mapping: Mapping = first_document(keys).with_context(invalid)?;
         if mapping.contains_key("name") {
             bail!("invalid {}: name is the image directory's", path.display());
         }
@@ -63,14 +63,6 @@ impl NewEntry {
         }
         item
     }
-}
-
-/// Only the first document's keys, none when there's none
-fn parse_keys(keys: &str) -> Result<Mapping, serde_norway::Error> {
-    let Some(document) = serde_norway::Deserializer::from_str(keys).next() else {
-        return Ok(Mapping::new());
-    };
-    Ok(Option::<Mapping>::deserialize(document)?.unwrap_or_default())
 }
 
 pub enum Added {

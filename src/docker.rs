@@ -115,7 +115,7 @@ pub fn check_container(container: &str, containers: &[String], description: &str
 /// Returns only if docker can't run
 pub fn exec<S: AsRef<str>>(args: &[S]) -> Result<()> {
     prepare(args);
-    let e = Command::new(DOCKER).args(args.iter().map(AsRef::as_ref)).exec();
+    let e = docker_command(args).exec();
     Err(e).context(format!("can't run {DOCKER}"))
 }
 
@@ -142,21 +142,22 @@ pub fn run_muted<S: AsRef<str>>(args: &[S]) -> bool {
 /// `Err` with docker's stderr, empty if docker can't run
 pub fn run_collecting_errors<S: AsRef<str>>(args: &[S]) -> std::result::Result<(), String> {
     prepare(args);
-    match Command::new(DOCKER)
-        .args(args.iter().map(AsRef::as_ref))
-        .stdin(Stdio::null())
-        .output()
-    {
+    match docker_command(args).stdin(Stdio::null()).output() {
         Ok(output) if output.status.success() => Ok(()),
         Ok(output) => Err(String::from_utf8_lossy(&output.stderr).into_owned()),
         Err(_) => Err(String::new()),
     }
 }
 
+fn docker_command<S: AsRef<str>>(args: &[S]) -> Command {
+    let mut command = Command::new(DOCKER);
+    command.args(args.iter().map(AsRef::as_ref));
+    command
+}
+
 fn run_with_stdout<S: AsRef<str>>(args: &[S], stdout: Stdio) -> bool {
     prepare(args);
-    Command::new(DOCKER)
-        .args(args.iter().map(AsRef::as_ref))
+    docker_command(args)
         .stdout(stdout)
         .status()
         .is_ok_and(|status| status.success())
@@ -174,9 +175,7 @@ fn log_command<S: AsRef<str>>(args: &[S]) {
     let command: Vec<&str> = std::iter::once(DOCKER).chain(args.iter().map(AsRef::as_ref)).collect();
     let line = format!("{} {}\n", jiff::Zoned::now().strftime("%FT%T%:z"), shell_join(&command));
 
-    let written = path
-        .parent()
-        .map_or(Ok(()), std::fs::create_dir_all)
+    let written = paths::create_parent_dir(&path)
         .and_then(|()| OpenOptions::new().create(true).append(true).open(&path))
         .and_then(|mut file| file.write_all(line.as_bytes()));
     if let Err(e) = written {
@@ -186,7 +185,7 @@ fn log_command<S: AsRef<str>>(args: &[S]) {
 
 /// Stdout, `None` if docker failed or can't run
 fn output(args: &[&str]) -> Option<String> {
-    let output = Command::new(DOCKER).args(args).stderr(Stdio::null()).output().ok()?;
+    let output = docker_command(args).stderr(Stdio::null()).output().ok()?;
     output
         .status
         .success()
@@ -195,8 +194,7 @@ fn output(args: &[&str]) -> Option<String> {
 
 /// `None` if docker can't run
 fn run_quietly(args: &[&str]) -> Option<bool> {
-    Command::new(DOCKER)
-        .args(args)
+    docker_command(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()

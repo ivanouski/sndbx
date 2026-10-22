@@ -9,6 +9,7 @@ use crate::{Result, paths, print_status, unique};
 pub const BASE_NAME: &str = "base";
 /// Extra keys for the settings entry build adds
 const ENTRY_FILE: &str = "sndbx.yml";
+const DOCKERFILE: &str = "Dockerfile";
 
 pub struct Builder {
     tag_prefix: String,
@@ -206,7 +207,7 @@ impl Builder {
     }
 
     fn dockerfile(&self, name: &str) -> PathBuf {
-        self.image_dir(name).join("Dockerfile")
+        self.image_dir(name).join(DOCKERFILE)
     }
 
     fn has_dockerfile(&self, name: &str) -> bool {

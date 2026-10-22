@@ -37,10 +37,13 @@ pub fn read_file(path: &Path) -> Result<String> {
 
 /// Writes in place, following symlinks and keeping permissions
 pub fn write_file(path: &Path, content: &str) -> Result<()> {
-    path.parent()
-        .map_or(Ok(()), std::fs::create_dir_all)
+    create_parent_dir(path)
         .and_then(|()| std::fs::write(path, content))
         .with_context(|| format!("can't write {}", path.display()))
+}
+
+pub fn create_parent_dir(path: &Path) -> std::io::Result<()> {
+    path.parent().map_or(Ok(()), std::fs::create_dir_all)
 }
 
 pub fn current_dir() -> PathBuf {

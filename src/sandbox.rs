@@ -277,7 +277,7 @@ fn workdir_name(target: &str) -> &str {
 }
 
 fn is_in_workspace(target: &str) -> bool {
-    target == MOUNT_ROOT || target.starts_with(&format!("{MOUNT_ROOT}/"))
+    Path::new(target).starts_with(MOUNT_ROOT)
 }
 
 /// Docker's `-p` syntax, `[HOST_IP:]HOST:CONTAINER[/PROTOCOL]`, where `PORT` means `PORT:PORT`

@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 
 use crate::paths::expand_path;
 use crate::{Abort, Result, paths};
@@ -105,7 +106,7 @@ impl Settings {
     pub fn load() -> Result<Self> {
         let path = path();
         if !path.exists() {
-            create_example(&path)?;
+            paths::write_file(&path, EXAMPLE)?;
             return Err(Abort(format!(
                 "Created an example config at {}, edit it and run again.",
                 path.display()
@@ -250,12 +251,16 @@ pub fn tag(tag_prefix: &str, name: &str) -> String {
     format!("{tag_prefix}:{name}")
 }
 
-/// Only the first document, empty settings when there's none
-fn parse(content: &str) -> Result<File, serde_norway::Error> {
+/// Only the first document, the default when there's none or it's empty
+fn first_document<T: DeserializeOwned + Default>(content: &str) -> Result<T, serde_norway::Error> {
     let Some(document) = serde_norway::Deserializer::from_str(content).next() else {
-        return Ok(File::default());
+        return Ok(T::default());
     };
-    Ok(Option::<File>::deserialize(document)?.unwrap_or_default())
+    Ok(Option::<T>::deserialize(document)?.unwrap_or_default())
+}
+
+fn parse(content: &str) -> Result<File, serde_norway::Error> {
+    first_document(content)
 }
 
 /// No whitespace, and no leading `-` that would make it an option
@@ -268,10 +273,6 @@ fn is_valid_tag_prefix(prefix: &str) -> bool {
     prefix
         .split(['.', '_', '-', '/'])
         .all(|word| !word.is_empty() && word.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()))
-}
-
-fn create_example(path: &Path) -> Result<()> {
-    paths::write_file(path, EXAMPLE)
 }
 
 #[cfg(test)]
