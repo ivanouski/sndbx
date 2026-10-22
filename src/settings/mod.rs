@@ -11,7 +11,6 @@ use crate::{Abort, Result, paths};
 use de::{optional_text, or_default, strings, text};
 pub use edit::{Added, NewEntry, add_image, comment_out_image};
 
-/// The key of the directory build finds images in, which messages name
 pub const IMAGES_DIR_SETTING: &str = "images_dir";
 const DEFAULT_TAG_PREFIX: &str = "sndbx";
 // The images directory of the repo this binary was built from
@@ -31,17 +30,17 @@ pub struct Image {
     pub name: String,
     pub tag: String,
     pub config_dir: PathBuf,
-    /// Overrides the user the image runs as, whose home `config_target` is in
+    /// Overrides the image's user
     pub user: Option<String>,
     /// Relative to the user's home
     pub config_target: String,
     pub ports: Vec<String>,
     pub docker_args: Vec<String>,
-    /// Whether the image reaches the network through the proxy when `proxy` turns it on
+    /// Whether the image uses the proxy when it's on
     pub proxy: bool,
 }
 
-/// The settings file as written, an unknown key is an error, likely a misspelled one
+/// The settings file as written
 #[derive(Deserialize, Default, Clone, PartialEq, Debug)]
 #[serde(default, deny_unknown_fields, expecting = "a mapping with an images list")]
 struct File {
@@ -49,15 +48,13 @@ struct File {
     tag_prefix: Option<String>,
     #[serde(deserialize_with = "optional_text")]
     images_dir: Option<String>,
-    /// For every image, before the image's own
+    /// Before each image's own
     #[serde(deserialize_with = "strings")]
     docker_args: Vec<String>,
-    /// Turns the proxy on
     proxy: Option<Proxy>,
     images: Option<Vec<Entry>>,
 }
 
-/// The proxy sandboxes reach the network through
 #[derive(Deserialize, Clone, PartialEq, Debug)]
 #[serde(deny_unknown_fields, expecting = "a mapping with an image")]
 pub struct Proxy {
@@ -67,14 +64,13 @@ pub struct Proxy {
     pub allow: Allow,
 }
 
-/// The hosts the proxy lets through
 #[derive(Deserialize, Clone, Copy, PartialEq, Debug, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Allow {
     /// The ones in `allowed_hosts`
     #[default]
     Listed,
-    /// Every one, to watch what sandboxes reach without limiting it
+    /// Every host, to watch what sandboxes reach
     All,
 }
 
@@ -99,14 +95,13 @@ struct Entry {
     proxy: Option<bool>,
 }
 
-/// The settings file, or the defaults where it has none
 #[derive(Default)]
 pub struct Settings {
     file: File,
 }
 
 impl Settings {
-    /// Reads the settings, or creates an example and stops when there's no settings file
+    /// Creates an example and stops when there's no settings file
     pub fn load() -> Result<Self> {
         let path = path();
         if !path.exists() {
@@ -120,7 +115,6 @@ impl Settings {
         read(&path)
     }
 
-    /// Reads the settings, the defaults when there's no settings file
     pub fn load_or_default() -> Result<Self> {
         let path = path();
         if !path.exists() {
@@ -166,12 +160,10 @@ impl Settings {
         })
     }
 
-    /// The tag the entry runs, its own or its name's default one
     fn entry_tag(&self, entry: &Entry) -> String {
         entry.tag.clone().unwrap_or_else(|| self.default_tag(&entry.name))
     }
 
-    /// The tag an image runs without a tag of its own, `<tag_prefix>:<name>`
     pub fn default_tag(&self, name: &str) -> String {
         tag(self.tag_prefix(), name)
     }
@@ -180,12 +172,11 @@ impl Settings {
         self.images().iter().find(|entry| entry.name == name)
     }
 
-    /// The tag the image's entry runs, `None` when it has no entry
+    /// `None` when the image has no entry
     pub fn configured_tag(&self, name: &str) -> Option<String> {
         self.entry(name).map(|entry| self.entry_tag(entry))
     }
 
-    /// The images whose entries run the tag
     pub fn names_running(&self, tag: &str) -> Vec<&str> {
         self.images()
             .iter()
@@ -202,7 +193,6 @@ impl Settings {
         self.file.tag_prefix.as_deref().unwrap_or(DEFAULT_TAG_PREFIX)
     }
 
-    /// The default finds the repo's images as long as it's where the binary was built
     pub fn images_dir(&self) -> PathBuf {
         match self.file.images_dir.as_deref() {
             Some(images_dir) => expand_path(images_dir, Some(&dir())),
@@ -210,7 +200,6 @@ impl Settings {
         }
     }
 
-    /// The proxy, `None` when it's off
     pub fn proxy(&self) -> Option<&Proxy> {
         self.file.proxy.as_ref()
     }
@@ -220,13 +209,11 @@ impl Settings {
     }
 }
 
-/// Reads and validates the settings file
 fn read(path: &Path) -> Result<Settings> {
     let content = paths::read_file(path)?;
     validate(&content, path)
 }
 
-/// The settings in `content`, read from `path`
 fn validate(content: &str, path: &Path) -> Result<Settings> {
     let file = match parse(content) {
         // serde names the field without a path at the top level
@@ -258,12 +245,12 @@ fn validate(content: &str, path: &Path) -> Result<Settings> {
     Ok(Settings { file })
 }
 
-/// The default tag of an image, `<tag_prefix>:<name>`
+/// The default tag, `<tag_prefix>:<name>`
 pub fn tag(tag_prefix: &str, name: &str) -> String {
     format!("{tag_prefix}:{name}")
 }
 
-/// The first document, empty settings when there's none or it's empty
+/// Only the first document, empty settings when there's none
 fn parse(content: &str) -> Result<File, serde_norway::Error> {
     let Some(document) = serde_norway::Deserializer::from_str(content).next() else {
         return Ok(File::default());
@@ -271,7 +258,7 @@ fn parse(content: &str) -> Result<File, serde_norway::Error> {
     Ok(Option::<File>::deserialize(document)?.unwrap_or_default())
 }
 
-/// Something docker can take as an image: not empty, no whitespace, no `-` first that would make it an option
+/// No whitespace, and no leading `-` that would make it an option
 fn is_valid_image(image: &str) -> bool {
     !image.is_empty() && !image.starts_with('-') && !image.contains(char::is_whitespace)
 }

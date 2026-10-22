@@ -1,5 +1,5 @@
-//! The proxy that proxied sandboxes reach the network through: they are on an internal network
-//! with no route out, and the proxy, also on the default one, lets through only the allowed hosts, or every one
+//! Proxied sandboxes are on an internal network with no route out; the proxy, also on the default one, lets
+//! through the allowed hosts
 
 use std::path::{Path, PathBuf};
 
@@ -11,36 +11,31 @@ use crate::{Result, paths};
 const NETWORK: &str = "sndbx-internal";
 const CONTAINER: &str = "sndbx-proxy";
 const PORT: u16 = 3128;
-// The variables tools read the proxy's address from, and the ones with the hosts they reach without it
+// What tools read the proxy from, and the hosts to bypass it for
 const PROXY_ENV: [&str; 4] = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"];
 const PROXY_BYPASS_ENV: [&str; 2] = ["NO_PROXY", "no_proxy"];
 const PROXY_BYPASS_HOSTS: &str = "localhost,127.0.0.1,::1";
 const CONFIG_TARGET: &str = "/etc/squid/squid.conf";
 const ACCESS_LOG: &str = "/var/log/squid/access.log";
-// A line each in the access log with the time like sndbx's log, the sandbox's address, how squid handled the request
-// and the HTTP status, the method and the URL, then how long it took in milliseconds and the bytes the sandbox sent
-// and got
+// Time like sndbx's log, client, squid result/HTTP status, method, URL, duration in ms, bytes sent and received
 const LOG_FORMAT: &str = "%{%FT%T%z}tl %>a %Ss/%03>Hs %rm %ru dur=%trms in=%>st out=%<st";
-// In a denied request's line, after the time and the sandbox's address
+// In denied requests' lines
 const DENIED: &str = " TCP_DENIED/";
-// Follows a log's lines with a text from its last ones that have it: those up to the log's size now, then the ones
-// after it, so none shows twice or goes missing. -F keeps following when the log is rotated or recreated.
+// Follows the log's lines containing $3, the last $1 up to its current size first, so none repeats or goes missing.
+// -F survives log rotation.
 const FOLLOW_MATCHING: &str = r#"lines=$1 log=$2 text=$3
 size=$(wc -c < "$log") || exit
 head -c "$size" "$log" | grep -F -- "$text" | tail -n "$lines"
 tail -c +$((size + 1)) -F "$log" | grep --line-buffered -F -- "$text"
 "#;
-// Docker's default network, which the proxy reaches the hosts through
+// Docker's default network, the proxy's way out
 const EGRESS_NETWORK: &str = "bridge";
 
-/// The proxy's URL in the internal network
 fn url() -> String {
     format!("http://{CONTAINER}:{PORT}")
 }
 
-/// The `docker run` arguments that put a sandbox behind the proxy: the internal network, and the proxy's
-/// address for the tools that read it. A `--network` among the sandbox's docker args doesn't replace the
-/// internal network, docker refuses it or adds it, so a sandbox on another network sets `proxy: false`.
+/// Docker refuses or adds another `--network`, so a sandbox on another network sets `proxy: false`
 pub fn run_args() -> Vec<String> {
     let url = url();
     let mut args = vec![format!("--network={NETWORK}")];
@@ -57,35 +52,32 @@ fn config_path() -> PathBuf {
     paths::state_dir().join("squid.conf")
 }
 
-/// The config the proxy last loaded, which `squid.conf` may be ahead of when loading it failed
+/// `squid.conf` may be ahead of it when loading failed
 fn loaded_config_path() -> PathBuf {
     paths::state_dir().join("squid.conf.loaded")
 }
 
-/// The proxy a sandbox runs behind
 pub struct Proxy {
     pub image: String,
     pub hosts: Hosts,
 }
 
-/// The hosts the proxy lets through
 pub enum Hosts {
-    /// Every one but the proxy's own and link-local ones, like a cloud's metadata service
+    /// Except the proxy's own and link-local ones, like cloud metadata services
     All,
-    /// Only these, none when it's empty
     Listed(Vec<String>),
 }
 
-/// How squid's config file compares to what the proxy runs with
+/// The config file against what the proxy runs
 #[derive(PartialEq)]
 enum Config {
     Loaded,
     Changed,
-    /// The file is new, so a proxy that mounted the one before it doesn't see it
+    /// A proxy that mounted the previous file doesn't see it
     Created,
 }
 
-/// Starts the proxy and its network unless they're there, or updates its hosts
+/// Starts the proxy and its network if needed, or updates its hosts
 pub fn ensure(proxy: &Proxy) -> Result<()> {
     let content = config(&proxy.hosts);
     let config = write_config(&content)?;
@@ -98,16 +90,15 @@ pub fn ensure(proxy: &Proxy) -> Result<()> {
     Ok(())
 }
 
-/// Writes squid's config unless the file has it already
 fn write_config(content: &str) -> Result<Config> {
     let path = config_path();
-    // Docker leaves an empty directory at a bind mount's path when the file is gone as the container restarts
+    // Docker leaves a directory at a bind mount's path if the file was gone when the container restarted
     if path.is_dir() {
         std::fs::remove_dir(&path).with_context(|| format!("can't remove the directory {}", path.display()))?;
     }
     let current = std::fs::read_to_string(&path).ok();
     if current.as_deref() != Some(content) {
-        // Written in place, the proxy's bind mount keeps the old file when it's replaced
+        // In place, as the bind mount keeps a replaced file
         paths::write_file(&path, content)?;
     }
     Ok(if current.is_none() {
@@ -122,7 +113,7 @@ fn write_config(content: &str) -> Result<Config> {
 fn create_network() -> Result<()> {
     match network_internal(NETWORK) {
         Some(true) => Ok(()),
-        // Sandboxes on it would reach any host, not just through the proxy. It isn't sndbx's to remove.
+        // Not sndbx's to remove
         Some(false) => bail!(
             "the docker network {NETWORK} isn't internal, sandboxes on it could reach any host, \
              remove it with docker network rm {NETWORK} and run again"
@@ -132,22 +123,19 @@ fn create_network() -> Result<()> {
     }
 }
 
-/// Runs the proxy from `image` unless it's up with it, or reloads its config when it changed, its state
+/// Keeps a running proxy and reloads its config, or replaces it
 fn start(image: &str, config: &Config) -> Result<ContainerState> {
     match container_state(CONTAINER) {
         Some(state) if state.up && state.image == image && mounts_config(&state) && *config != Config::Created => {
             reload(config)?;
             Ok(state)
         }
-        // A stopped proxy may be on a network that was removed since, which keeps it from starting,
-        // one that keeps restarting doesn't run, one from another image isn't the configured one,
-        // and one that mounts another config file, like from another XDG_STATE_HOME, or one that's gone
-        // can't load the new one, so they're all replaced
+        // Stopped (its network may be gone), restarting, from another image, or mounting another or a
+        // recreated config file
         state => replace(state.is_some(), image),
     }
 }
 
-/// Has the running proxy reload its config when it changed and squid can use it
 fn reload(config: &Config) -> Result<()> {
     if *config != Config::Changed {
         return Ok(());
@@ -159,17 +147,16 @@ fn reload(config: &Config) -> Result<()> {
     Ok(())
 }
 
-/// Runs the proxy from `image` when squid can use its config, after removing the one there is when `exists`, its
-/// state as it starts
+/// Runs a new proxy once squid accepts the config, removing the old one if `exists`
 fn replace(exists: bool, image: &str) -> Result<ContainerState> {
-    // With its progress showing, which checking the config would pull it without, and its own error
+    // Pulled first to show progress and docker's own error
     if !docker::image_exists(image) && !docker::run(&["pull", image]) {
         bail!("can't pull the proxy image {image}");
     }
     let volume = format!("{}:{CONFIG_TARGET}:ro", config_path().display());
-    // Before removing the proxy there is, which keeps running with the config it has when squid can't use this one
+    // Before removing the old proxy, so it keeps running if squid rejects the config
     check_config(&["run", "--rm", "--entrypoint=squid", "-v", &volume, image, "-k", "parse"])?;
-    // With its anonymous volumes, the squid image's log and cache, which would pile up otherwise
+    // -v removes the log and cache volumes, which would pile up
     if exists && !docker::run_muted(&["rm", "-f", "-v", CONTAINER]) {
         bail!("can't remove the proxy {CONTAINER} to replace it");
     }
@@ -190,7 +177,6 @@ fn mounts_config(state: &ContainerState) -> bool {
     state.mounts.iter().any(|mount| Path::new(mount) == path)
 }
 
-/// Connects the proxy to the networks it isn't on yet, also when connecting it failed before
 fn connect(networks: &[String]) -> Result<()> {
     for network in [EGRESS_NETWORK, NETWORK] {
         if !networks.iter().any(|name| name == network)
@@ -202,8 +188,7 @@ fn connect(networks: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Has squid parse its config with the docker `args`, which it would stop on at start when it can't use it. Squid
-/// prints a line for each directive, so only its errors show, or all docker printed when it has none, like docker's own.
+/// Shows only squid's errors, as it prints a line per directive, or all of docker's output if there are none
 fn check_config(args: &[&str]) -> Result<()> {
     let Err(output) = docker::run_collecting_errors(args) else {
         return Ok(());
@@ -220,7 +205,6 @@ fn check_config(args: &[&str]) -> Result<()> {
     bail!("squid can't use the proxy's config {}", config_path().display());
 }
 
-/// Follows the running proxy's access log from its last `lines` lines, only the denied requests' with `denied`
 pub fn follow_log(lines: u64, denied: bool) -> Result<()> {
     if !container_state(CONTAINER).is_some_and(|state| state.up) {
         bail!("the proxy {CONTAINER} isn't running, sndbx run starts it");
@@ -229,7 +213,7 @@ pub fn follow_log(lines: u64, denied: bool) -> Result<()> {
     let command: &[&str] = if denied {
         &["sh", "-c", FOLLOW_MATCHING, "sh", &lines, ACCESS_LOG, DENIED]
     } else {
-        // -F keeps following when the log is rotated or recreated
+        // -F survives log rotation
         &["tail", "-n", &lines, "-F", ACCESS_LOG]
     };
     docker::exec_until_interrupted(CONTAINER, command)
@@ -239,14 +223,12 @@ fn start_error() -> String {
     format!("can't start the proxy, see docker logs {CONTAINER}")
 }
 
-/// Squid's config: HTTP to port 80 and HTTPS to port 443 only, only to the hosts, no cache. Requests go to squid's own
-/// access log, its `proxy` user can't open the container's stdout, a line each in `LOG_FORMAT`. Squid writes the line
-/// when the request ends, which for an HTTPS tunnel a client keeps open can be minutes after it started.
+/// HTTP to 80 and HTTPS to 443 only, no cache. Logs to a file, as squid's `proxy` user can't open the container's
+/// stdout. A line is written when the request ends, which can be minutes later for an HTTPS tunnel.
 fn config(hosts: &Hosts) -> String {
-    // Squid refuses an acl without values. With -n, squid matches only the host the request names, without it
-    // the reverse DNS name of an IP too, which whoever runs the IP chooses, like x.github.com.
+    // Squid refuses an acl without values. -n skips matching an IP's reverse DNS name, which its owner chooses.
     let (acl, allow) = match hosts {
-        // Squid's built-in acls, which match the address the host resolves to
+        // Built-in acls, matching the resolved address
         Hosts::All => (
             String::new(),
             "http_access deny to_localhost\nhttp_access deny to_linklocal\nhttp_access allow all\n",

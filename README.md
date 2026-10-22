@@ -86,6 +86,7 @@ To limit where sandboxes can connect, set `proxy` and list the allowed hosts in 
 sndbx run claude                                      # mount the current directory
 sndbx run claude -v ../api -v ../web                  # mount several, start in the last one
 sndbx run claude -v ../api -v ../web -w api           # start in api
+sndbx run claude -v . -v ../notes                     # a plain -v replaces the current directory, add . to keep it
 sndbx run claude -v ./sdk:/opt/sdk:ro                 # mount a read-only SDK, start in the current directory
 sndbx run claude -p 3000 -p 8080:80                   # publish ports, 3000 means 3000:3000
 sndbx run claude -k                                   # keep the container after it exits, for resume

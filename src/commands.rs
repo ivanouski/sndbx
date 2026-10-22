@@ -15,9 +15,9 @@ use crate::sandbox::{MOUNT_ROOT, Options, Sandbox};
 use crate::settings::{self, Allow, IMAGES_DIR_SETTING, Settings};
 use crate::{Result, allowlist, paths, print_line, print_status, unique};
 
-/// The usage first, like sndbx's help always had it
+/// Usage first
 const HELP_TEMPLATE: &str = "{usage-heading} {usage}\n\n{all-args}{after-help}";
-/// The usage, then what the command does
+/// Usage, then the command's description
 const COMMAND_HELP_TEMPLATE: &str = "{usage-heading} {usage}\n\n{before-help}{all-args}";
 const DEFAULT_LINES: u64 = 10;
 
@@ -278,7 +278,7 @@ struct Lines {
     lines: u64,
 }
 
-/// The CLI with the settings every command shares
+/// With the settings every subcommand shares
 fn command() -> clap::Command {
     Cli::command().mut_subcommands(with_shared_settings)
 }
@@ -343,14 +343,13 @@ fn build(args: &Build) -> Result<()> {
     Builder::new(&Settings::load_or_default()?).build(&args.images, args.rebuild_base)
 }
 
-/// An image `rm` checked
 struct Removal<'a> {
     name: &'a str,
     tag: String,
     exists: bool,
 }
 
-/// Checks every image before removing any, so a typo or a container stops `rm` before it changes anything
+/// Checks every image before removing any
 fn rm(args: &Rm) -> Result<()> {
     let settings = Settings::load_or_default()?;
     if args.images.iter().any(|name| name == BASE_NAME) {
@@ -366,8 +365,7 @@ fn rm(args: &Rm) -> Result<()> {
     remove_images(&removals)
 }
 
-/// The image as `rm` removes it along with `names`, an error when it's unknown, another image not in `names`
-/// runs its tag too, or containers use it
+/// Fails if the image is unknown, an image not in `names` shares its tag, or containers use it
 fn check_removal<'a>(settings: &Settings, name: &'a str, names: &[&str]) -> Result<Removal<'a>> {
     let configured_tag = settings.configured_tag(name);
     let tag = configured_tag.clone().unwrap_or_else(|| settings.default_tag(name));
@@ -399,7 +397,7 @@ fn check_removal<'a>(settings: &Settings, name: &'a str, names: &[&str]) -> Resu
     Ok(Removal { name, tag, exists })
 }
 
-/// Removes the checked images and comments out their entries, images that share a tag remove it once
+/// Removes each tag once and comments out the entries
 fn remove_images(removals: &[Removal]) -> Result<()> {
     let mut removed: Vec<&str> = Vec::new();
     for removal in removals {
@@ -420,7 +418,7 @@ fn remove_images(removals: &[Removal]) -> Result<()> {
     Ok(())
 }
 
-/// Comments out the image's entry, only warning when it can't since the image is removed
+/// Only warns on failure, as the image is removed
 fn comment_out(name: &str) {
     let path = settings::path();
     match settings::comment_out_image(name) {
@@ -437,7 +435,7 @@ fn exec(args: &Exec) -> Result<()> {
     let container = &args.container;
     check_sandbox(&args.image, container, "running", running_containers)?;
 
-    // Without a terminal on stdin docker refuses -t, which breaks pipes and scripts
+    // Docker refuses -t without a terminal on stdin
     let tty = if std::io::stdin().is_terminal() { "-it" } else { "-i" };
     let user = args.user.as_ref().map(|user| format!("--user={user}"));
 
@@ -454,7 +452,6 @@ fn resume(args: &Resume) -> Result<()> {
     docker::exec(&["start", "-ai", container])
 }
 
-/// Checks that the image is in the settings and the container is one of its sandboxes in `state`
 fn check_sandbox(image: &str, container: &str, state: &str, containers: fn(&str) -> Result<Vec<String>>) -> Result<()> {
     Settings::load()?.image(image)?;
     check_docker()?;

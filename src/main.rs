@@ -25,18 +25,17 @@ impl fmt::Display for Abort {
 
 impl std::error::Error for Abort {}
 
-/// Prints a line to stdout, ignoring a closed pipe like `head` leaves behind
+/// Ignores a closed pipe, like `head` leaves
 pub fn print_line(line: &str) {
     let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "{line}");
 }
 
-/// Prints what sndbx is doing, marked off from the output of the docker commands it runs
 pub fn print_status(message: &str) {
     print_line(&format!("==> {message}"));
 }
 
-/// The items without the repeated ones, in the order they first appear
+/// Drops repeats, keeping the first-appearance order
 pub fn unique<T: PartialEq>(items: impl IntoIterator<Item = T>) -> Vec<T> {
     let mut unique = Vec::new();
     for item in items {
@@ -54,7 +53,7 @@ fn main() -> ExitCode {
 
     match e.downcast_ref::<Abort>() {
         Some(Abort(message)) => eprintln!("{message}"),
-        // With its causes, like "can't read <path>: <reason>"
+        // `:#` adds the causes
         None => eprintln!("Error: {e:#}."),
     }
     ExitCode::FAILURE

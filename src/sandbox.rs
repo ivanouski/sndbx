@@ -20,7 +20,7 @@ pub struct Options {
     pub workdir: Option<String>,
     pub keep: bool,
     pub docker_args: Vec<String>,
-    /// The proxy the sandbox reaches the network through, `None` for the open network
+    /// `None` for the open network
     pub proxy: Option<Proxy>,
 }
 
@@ -79,7 +79,7 @@ impl Sandbox {
         &self.image
     }
 
-    /// Runs the sandbox, once docker is checked and the image built
+    /// Expects docker checked and the image built
     pub fn run(&self) -> Result<()> {
         let config_target = self.config_target()?;
         std::fs::create_dir_all(&self.image.config_dir)?;
@@ -89,7 +89,6 @@ impl Sandbox {
         docker::exec(&self.run_args(&config_target))
     }
 
-    /// The `docker run` arguments with the config directory mounted at `config_target`
     fn run_args(&self, config_target: &str) -> Vec<String> {
         let mut args = vec!["run".to_string()];
         if !self.keep {
@@ -115,15 +114,13 @@ impl Sandbox {
         args
     }
 
-    /// Each volume as docker's `SRC:DST[:OPTS]`, the image's config directory last
     fn volume_specs(&self, config_target: &str) -> Vec<String> {
         let mut specs: Vec<String> = self.volumes.iter().map(Volume::spec).collect();
         specs.push(format!("{}:{config_target}", self.image.config_dir.display()));
         specs
     }
 
-    /// Where the config directory is mounted, in the home of the user in the settings or else the image's,
-    /// which also checks that the image exists
+    /// In the home of the configured or the image's user; fails if the image doesn't exist
     fn config_target(&self) -> Result<String> {
         let Some(image_user) = image_user(&self.image.tag) else {
             bail!("docker image '{}' does not exist", self.image.tag);
@@ -140,7 +137,7 @@ impl Sandbox {
     }
 }
 
-/// The workdir when it's a directory volume's target, the sandbox starts in one
+/// The sandbox starts in a directory volume
 fn check_workdir(volumes: &[Volume], workdir: &str) -> Result<String> {
     let targets = directory_targets(volumes);
     if targets.is_empty() {
@@ -158,8 +155,7 @@ fn check_workdir(volumes: &[Volume], workdir: &str) -> Result<String> {
     )
 }
 
-/// The image's ports and `extra`, the ones `-p` publishes, normalized and each once. A sandbox behind
-/// the proxy can't publish any.
+/// Normalized and deduplicated; a proxied sandbox can't publish any
 fn ports(image: &Image, extra: &[String], proxied: bool) -> Result<Vec<String>> {
     let ports = unique(
         image
@@ -184,17 +180,16 @@ fn ports(image: &Image, extra: &[String], proxied: bool) -> Result<Vec<String>> 
     Ok(ports)
 }
 
-/// The home of `user`, a name or `name:group` like docker's `--user`, empty for root; `None` for a uid
+/// `user` is like docker's `--user`; `None` for a uid
 fn home(user: &str) -> Option<String> {
     match user.split_once(':').map_or(user, |(name, _group)| name) {
-        // Empty is docker's default, 0 is root's uid
+        // Empty is docker's default
         "" | "root" | "0" => Some(ROOT_HOME.to_string()),
         uid if is_digits(uid) => None,
         name => Some(join(&[HOME_ROOT, name])),
     }
 }
 
-/// Where the directory volumes are mounted, the places a sandbox can start in
 fn directory_targets(volumes: &[Volume]) -> Vec<&str> {
     volumes
         .iter()
@@ -231,8 +226,7 @@ fn volumes(specs: &[String]) -> Result<Vec<Volume>> {
     Ok(volumes)
 }
 
-/// Docker's -v syntax, SRC[:DST[:OPTS]], except that SRC is always a host path
-/// and DST defaults to `MOUNT_ROOT/<basename>`.
+/// Like docker's `-v SRC[:DST[:OPTS]]`, but SRC is a host path and DST defaults to `MOUNT_ROOT/<basename>`
 fn parse_volume(spec: &str) -> Result<Volume> {
     let parts: Vec<&str> = spec.split(':').collect();
     if parts.len() > 3 || parts.iter().any(|part| part.is_empty()) {
@@ -259,7 +253,7 @@ fn parse_volume(spec: &str) -> Result<Volume> {
         if !source.is_dir() {
             bail!("{} is not a directory", source.display());
         }
-        // Not the root, it's refused above
+        // The root is refused above
         mount_target(&source.file_name().unwrap_or_default().to_string_lossy())
     };
 
@@ -324,7 +318,6 @@ fn mount_target(name: &str) -> String {
     join(&[MOUNT_ROOT, name])
 }
 
-/// An absolute path in the container without `.`, `..` or repeated slashes
 fn container_path(path: &str) -> String {
     normalize(Path::new(path)).to_string_lossy().into_owned()
 }

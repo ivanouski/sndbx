@@ -1,4 +1,4 @@
-//! The hosts proxied sandboxes may reach, one per line in their own file
+//! The hosts proxied sandboxes may reach, one per line
 
 use std::path::{Path, PathBuf};
 
@@ -11,8 +11,7 @@ pub fn path() -> PathBuf {
     settings::dir().join("allowed_hosts")
 }
 
-/// The allowed hosts. A missing file is an error rather than no hosts, which would block everything,
-/// or no proxy, which would let everything through.
+/// A missing file is an error: neither blocking nor allowing everything is a safe guess
 pub fn load() -> Result<Vec<String>> {
     let path = path();
     if !path.exists() {
@@ -27,8 +26,7 @@ pub fn load() -> Result<Vec<String>> {
     parse(&content, &path)
 }
 
-/// The hosts in `content`, one per line, without blank lines, `#` comments, repeated hosts and hosts a `.domain`
-/// covers: squid ignores one of two overlapping hosts, which may be the `.domain`
+/// Drops `#` comments, repeats and hosts a `.domain` covers, as squid ignores one of two overlapping hosts
 fn parse(content: &str, path: &Path) -> Result<Vec<String>> {
     let mut hosts: Vec<String> = Vec::new();
     for (index, line) in content.lines().enumerate() {
@@ -53,13 +51,12 @@ fn parse(content: &str, path: &Path) -> Result<Vec<String>> {
         .collect())
 }
 
-/// Whether `domain`, like `.a.com`, also allows the other host, like `a.com`, `x.a.com` or `.x.a.com`
+/// Whether `domain`, like `.a.com`, covers `host`, like `a.com`, `x.a.com` or `.x.a.com`
 fn covers(domain: &str, host: &str) -> bool {
     domain != host && domain.starts_with('.') && (host == &domain[1..] || host.ends_with(domain))
 }
 
-/// Lowercase alphanumeric labels joined by dots, `-` inside them, a leading dot for subdomains too,
-/// so nothing else reaches the proxy's config
+/// Strict, so nothing else reaches the proxy's config
 fn is_valid_host(host: &str) -> bool {
     host.strip_prefix('.').unwrap_or(host).split('.').all(|label| {
         !label.is_empty()

@@ -11,14 +11,14 @@ use serde_norway::{Mapping, Value};
 use super::{EXAMPLE, Entry, File, parse, path, validate};
 use crate::{Result, paths, unique};
 
-/// The entry build adds for an image: its name, and the keys from the image's directory as written there
+/// The entry build adds: the name, plus the keys from the image's entry file as written
 pub struct NewEntry {
     entry: Entry,
     keys: String,
 }
 
 impl NewEntry {
-    /// The entry with the keys in `keys`, all of an entry's but `name`, as read from `path`; none when it's empty
+    /// `keys` are all of the entry's but `name`
     pub fn new(name: &str, keys: &str, path: &Path) -> Result<Self> {
         let invalid = || format!("invalid {}", path.display());
         let mut mapping = parse_keys(keys).with_context(invalid)?;
@@ -32,7 +32,7 @@ impl NewEntry {
             entry,
             keys: keys.trim_end().to_string(),
         };
-        // Indented under the name, flow style or a second document would read differently or not at all
+        // The keys must parse the same indented under the name, which flow style or a second document wouldn't
         let parsed: Option<Vec<Entry>> = serde_norway::from_str(&new.item(0)).ok();
         if parsed.as_deref() != Some(std::slice::from_ref(&new.entry)) {
             bail!("invalid {}: write each key at the start of a line", path.display());
@@ -48,10 +48,10 @@ impl NewEntry {
         self.entry.config_target.is_some()
     }
 
-    /// The entry as a YAML list item at `indent`, its keys indented under its name
+    /// A YAML list item at `indent`
     pub fn item(&self, indent: usize) -> String {
         let indent = " ".repeat(indent);
-        // Quoted, a name like `true` or `123` would be a bool or a number otherwise
+        // Unquoted, `true` or `123` would be a bool or a number
         let mut item = format!("{indent}- name: '{}'\n", self.entry.name.replace('\'', "''"));
         for line in self.keys.lines() {
             if !line.trim().is_empty() {
@@ -65,7 +65,7 @@ impl NewEntry {
     }
 }
 
-/// The keys in the first document, none when there's none or it's empty
+/// Only the first document's keys, none when there's none
 fn parse_keys(keys: &str) -> Result<Mapping, serde_norway::Error> {
     let Some(document) = serde_norway::Deserializer::from_str(keys).next() else {
         return Ok(Mapping::new());
@@ -73,20 +73,17 @@ fn parse_keys(keys: &str) -> Result<Mapping, serde_norway::Error> {
     Ok(Option::<Mapping>::deserialize(document)?.unwrap_or_default())
 }
 
-/// What `add_image` did
 pub enum Added {
     /// An entry already runs the image
     Already,
-    /// The image's entry runs another tag, this one
+    /// The image's entry runs this other tag
     OtherTag(String),
-    /// Added an entry to the end of the settings file
     Appended,
-    /// Created the settings file, the example with an entry for the image
+    /// Created the settings file from the example
     Created,
 }
 
-/// Adds an entry for the image to the settings unless one has it already, appending it to the settings file
-/// so the rest of the file stays as written, or creating the example with it when there's no settings file
+/// Appends an entry unless there is one, keeping the rest of the file as written, or creates the file from the example
 pub fn add_image(new: &NewEntry) -> Result<Added> {
     let name = new.name();
     let path = path();
@@ -127,9 +124,8 @@ pub fn add_image(new: &NewEntry) -> Result<Added> {
     Ok(added)
 }
 
-/// The text to append to `content` that adds the entry to the images list and changes nothing else:
-/// the entry indented like a list item in the file, the last first, or by 2 or none, or under a new `images` key.
-/// `None` when none does, like for a flow list `[...]`, an `images` key before others, or a second document.
+/// The text that, appended, adds the entry and changes nothing else: indented like the file's list items, by 2 or
+/// none, or under a new `images` key. `None` when none works, like for a flow list or a second document.
 fn addition(file: &File, content: &str, new: &NewEntry) -> Option<String> {
     let mut expected = file.clone();
     expected.images.get_or_insert_default().push(new.entry.clone());
@@ -152,8 +148,7 @@ fn addition(file: &File, content: &str, new: &NewEntry) -> Option<String> {
         .find(|addition| parse(&format!("{content}{addition}")).is_ok_and(|parsed| parsed == expected))
 }
 
-/// Comments out the image's entry in the settings file, keeping the rest of the file as written.
-/// False when there's no settings file or no entry.
+/// False when there's no settings file or no entry
 pub fn comment_out_image(name: &str) -> Result<bool> {
     let path = path();
     if !path.exists() {
@@ -173,9 +168,8 @@ pub fn comment_out_image(name: &str) -> Result<bool> {
     Ok(true)
 }
 
-/// `content` with the entry at `index` in the images list commented out under `marker`, and nothing else changed:
-/// the first list item that, commented out, leaves the settings without that entry. `None` when none does,
-/// like in a flow list.
+/// Comments out the first list item that leaves the settings without the entry at `index` and nothing else changed;
+/// `None` when none does, like in a flow list
 fn commented_out(file: &File, content: &str, index: usize, marker: &str) -> Option<String> {
     let mut expected = file.clone();
     expected.images.as_mut()?.remove(index);
@@ -187,15 +181,13 @@ fn commented_out(file: &File, content: &str, index: usize, marker: &str) -> Opti
         .find(|commented| parse(commented).is_ok_and(|parsed| without_empty_images(parsed) == expected))
 }
 
-/// The lines `start..end` of a list item, which starts at `indent`
 struct ListItem {
     start: usize,
     end: usize,
     indent: usize,
 }
 
-/// Each list item: from its `- ` line to the next line indented as far as it or less, comments and blank lines
-/// aside, without the comments and blank lines at its end
+/// Each list item, up to the next line indented as far or less, without trailing comments and blank lines
 fn list_items<'a>(lines: &'a [&str]) -> impl Iterator<Item = ListItem> + 'a {
     lines.iter().enumerate().filter_map(|(start, line)| {
         let indent = list_item_indent(line)?;
@@ -216,7 +208,6 @@ fn list_items<'a>(lines: &'a [&str]) -> impl Iterator<Item = ListItem> + 'a {
     })
 }
 
-/// `lines` with the item's lines commented out at its indent under `marker`, its comments and blank lines as they are
 fn comment_out(lines: &[&str], item: &ListItem, marker: &str) -> String {
     let mut commented = lines[..item.start].concat();
     commented.push_str(&" ".repeat(item.indent));
@@ -244,7 +235,7 @@ fn is_blank_or_comment(line: &str) -> bool {
     matches!(line.trim_start().chars().next(), None | Some('#'))
 }
 
-/// Without an empty images list, which a list with all its entries commented out is: no list at all
+/// Commenting out every entry leaves no list, not an empty one
 fn without_empty_images(mut file: File) -> File {
     if file.images.as_ref().is_some_and(Vec::is_empty) {
         file.images = None;

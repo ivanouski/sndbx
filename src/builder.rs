@@ -7,7 +7,7 @@ use crate::settings::{self, Added, IMAGES_DIR_SETTING, Image, NewEntry, Settings
 use crate::{Result, paths, print_status, unique};
 
 pub const BASE_NAME: &str = "base";
-/// The file in an image's directory with the keys of the entry build adds, besides its name
+/// Extra keys for the settings entry build adds
 const ENTRY_FILE: &str = "sndbx.yml";
 
 pub struct Builder {
@@ -23,7 +23,7 @@ impl Builder {
         }
     }
 
-    /// The images build takes, every directory in `images_dir` with a Dockerfile except base
+    /// Every directory with a Dockerfile except base
     pub fn image_names(&self) -> Result<Vec<String>> {
         self.check_images_dir()?;
 
@@ -37,9 +37,7 @@ impl Builder {
         Ok(names)
     }
 
-    /// Builds base first if `rebuild_base` or an image needs it and it doesn't exist yet,
-    /// then each image in turn, stopping at the first that fails, and adds each to the settings
-    /// so it runs right away
+    /// Builds base if needed, then each image, adding it to the settings so it runs right away
     pub fn build(&self, names: &[String], rebuild_base: bool) -> Result<()> {
         let known = self.image_names()?;
         for name in names {
@@ -51,7 +49,7 @@ impl Builder {
             }
         }
         let images = unique(names.iter().map(String::as_str));
-        // Before building, which takes a while, so a mistake in an entry file doesn't stop it halfway
+        // Before the slow builds, so a bad entry file fails fast
         let entries = images
             .iter()
             .map(|name| self.new_entry(name))
@@ -66,7 +64,6 @@ impl Builder {
         Ok(())
     }
 
-    /// The entry build adds for the image, with the keys from its entry file when it has one
     fn new_entry(&self, name: &str) -> Result<NewEntry> {
         let path = self.entry_file(name);
         let keys = if path.exists() {
@@ -77,8 +74,7 @@ impl Builder {
         NewEntry::new(name, &keys, &path)
     }
 
-    /// Builds the image `run` runs when it doesn't exist yet and build makes its tag, from the directory
-    /// the tag names, which may be another image's; otherwise explains why it can't
+    /// Builds the image `run` needs if it's missing and its tag is one build makes
     pub fn build_missing(&self, image: &Image) -> Result<()> {
         if image_exists(&image.tag) {
             return Ok(());
@@ -99,7 +95,7 @@ impl Builder {
         self.docker_build(name)
     }
 
-    /// The directory in `images_dir` build makes the tag from, base too
+    /// The image directory build makes the tag from
     fn image_dir_for<'a>(&self, tag: &'a str) -> Result<&'a str> {
         self.check_images_dir()?;
         let prefix = format!("{}:", self.tag_prefix);
@@ -116,7 +112,6 @@ impl Builder {
         Ok(name)
     }
 
-    /// Builds base if `rebuild_base`, or if one of the images needs it and it doesn't exist yet
     fn build_base(&self, images: &[&str], rebuild_base: bool) -> Result<()> {
         if rebuild_base {
             self.docker_build(BASE_NAME)?;
@@ -133,7 +128,7 @@ impl Builder {
         let tag_prefix_arg = format!("TAG_PREFIX={}", self.tag_prefix);
 
         let mut args = vec!["build", "--no-cache"];
-        // Only images FROM ${TAG_PREFIX}:base declare the arg, docker warns about unused ones.
+        // Docker warns about an unused build arg
         if self.needs_base(name)? {
             args.extend(["--build-arg", &tag_prefix_arg]);
         }
@@ -169,7 +164,7 @@ impl Builder {
         settings::tag(&self.tag_prefix, name)
     }
 
-    /// Adds a built image to the settings, only warning when it can't since the image was built
+    /// Only warns on failure, as the image is built
     fn add_to_settings(&self, entry: &NewEntry) {
         let name = entry.name();
         let path = settings::path();
@@ -202,7 +197,6 @@ impl Builder {
         self.images_dir.join(name)
     }
 
-    /// Whether `name` is a directory in `images_dir` with a Dockerfile, not a hidden or nested one
     fn is_image_dir(&self, name: &str) -> bool {
         is_dir_name(name) && self.has_dockerfile(name)
     }
@@ -232,12 +226,12 @@ impl Builder {
     }
 }
 
-/// Whether `name` can be an image's directory in `images_dir`: not empty, hidden or nested
+/// Not empty, hidden or nested
 fn is_dir_name(name: &str) -> bool {
     !name.is_empty() && !name.starts_with('.') && !name.contains('/')
 }
 
-/// Whether a line of the Dockerfile is `FROM ${TAG_PREFIX}:base`, maybe followed by `AS <name>`
+/// Whether a line is `FROM ${TAG_PREFIX}:base`, maybe with `AS <name>`
 fn is_from_base(dockerfile: &str) -> bool {
     let image = format!("${{TAG_PREFIX}}:{BASE_NAME}");
     dockerfile.lines().any(|line| {

@@ -28,33 +28,33 @@ pub fn image_exists(tag: &str) -> bool {
     run_quietly(&["image", "inspect", tag]) == Some(true)
 }
 
-/// The user the image runs as, like `ubuntu` or `1000:1000`, empty for root, `None` if the image doesn't exist
+/// Empty for root, `None` if the image doesn't exist
 pub fn image_user(tag: &str) -> Option<String> {
     output(&["image", "inspect", "--format", "{{.Config.User}}", tag]).map(|user| user.trim().to_string())
 }
 
-/// Whether the network is internal, without a route out, `None` if it doesn't exist
+/// `None` if the network doesn't exist
 pub fn network_internal(name: &str) -> Option<bool> {
     output(&["network", "inspect", "--format", "{{.Internal}}", name]).map(|internal| internal.trim() == "true")
 }
 
 pub struct ContainerState {
-    /// Running and not waiting to restart after it exited
+    /// Running and not restarting
     pub up: bool,
-    /// The image as `docker run` was given it
+    /// As given to `docker run`
     pub image: String,
     pub networks: Vec<String>,
-    /// The host paths mounted in it
+    /// Host paths
     pub mounts: Vec<String>,
 }
 
-/// A line each, as paths may have spaces: the state, the image, the networks, then a line per mount
+/// A value per line, as paths may have spaces
 const CONTAINER_STATE_FORMAT: &str = "{{.State.Running}}\n{{.State.Restarting}}\n\
                                           {{.Config.Image}}\n\
                                           {{range $name, $network := .NetworkSettings.Networks}}{{$name}} {{end}}\n\
                                           {{range .Mounts}}{{.Source}}\n{{end}}";
 
-/// The container's state, `None` if it doesn't exist
+/// `None` if the container doesn't exist
 pub fn container_state(name: &str) -> Option<ContainerState> {
     let state = output(&["container", "inspect", "--format", CONTAINER_STATE_FORMAT, name])?;
     let mut lines = state.lines();
@@ -78,7 +78,7 @@ pub fn stopped_containers(image: &str) -> Result<Vec<String>> {
     containers(&["--all", "--filter", "status=exited", "--filter", &label_filter(image)])
 }
 
-/// The containers in any state that use the image, sndbx's sandboxes or not, which keep docker from removing it
+/// Any containers using the image, which keep docker from removing it
 pub fn image_containers(tag: &str) -> Result<Vec<String>> {
     containers(&["--all", "--filter", &format!("ancestor={tag}")])
 }
@@ -112,17 +112,15 @@ pub fn check_container(container: &str, containers: &[String], description: &str
     )
 }
 
-/// Replaces sndbx with docker, returning only if docker can't run
+/// Returns only if docker can't run
 pub fn exec<S: AsRef<str>>(args: &[S]) -> Result<()> {
     prepare(args);
     let e = Command::new(DOCKER).args(args.iter().map(AsRef::as_ref)).exec();
     Err(e).context(format!("can't run {DOCKER}"))
 }
 
-/// Replaces sndbx with the command in the container, which runs until Ctrl-C, like one following a log
 pub fn exec_until_interrupted(container: &str, command: &[&str]) -> Result<()> {
-    // With a terminal, Ctrl-C stops the command in the container too, not just docker. Only when the output goes to
-    // it too, -t would end piped lines in \r\n.
+    // -t makes Ctrl-C stop the command in the container too, but would end piped lines in \r\n
     let mut args = vec!["exec"];
     if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
         args.push("-it");
@@ -132,17 +130,16 @@ pub fn exec_until_interrupted(container: &str, command: &[&str]) -> Result<()> {
     exec(&args)
 }
 
-/// Runs docker and waits for it, whether it succeeded
 pub fn run<S: AsRef<str>>(args: &[S]) -> bool {
     run_with_stdout(args, Stdio::inherit())
 }
 
-/// Runs docker like `run` without its output, like the ID `docker run -d` prints; its errors still show
+/// Hides stdout, like the ID `docker run -d` prints, but not errors
 pub fn run_muted<S: AsRef<str>>(args: &[S]) -> bool {
     run_with_stdout(args, Stdio::null())
 }
 
-/// Runs docker without its output, `Err` with what it printed on stderr when it fails, empty when it can't run at all
+/// `Err` with docker's stderr, empty if docker can't run
 pub fn run_collecting_errors<S: AsRef<str>>(args: &[S]) -> std::result::Result<(), String> {
     prepare(args);
     match Command::new(DOCKER)
@@ -165,13 +162,13 @@ fn run_with_stdout<S: AsRef<str>>(args: &[S], stdout: Stdio) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-/// Logs the command, and flushes what sndbx printed so it comes before docker's output
+/// Logs the command and flushes stdout so sndbx's output comes before docker's
 fn prepare<S: AsRef<str>>(args: &[S]) {
     log_command(args);
     let _ = std::io::stdout().flush();
 }
 
-/// A log that can't be written doesn't stop the command
+/// Only warns when the log can't be written
 fn log_command<S: AsRef<str>>(args: &[S]) {
     let path = log_path();
     let command: Vec<&str> = std::iter::once(DOCKER).chain(args.iter().map(AsRef::as_ref)).collect();
@@ -187,7 +184,7 @@ fn log_command<S: AsRef<str>>(args: &[S]) {
     }
 }
 
-/// What docker printed, without its errors, `None` if it failed or can't run at all
+/// Stdout, `None` if docker failed or can't run
 fn output(args: &[&str]) -> Option<String> {
     let output = Command::new(DOCKER).args(args).stderr(Stdio::null()).output().ok()?;
     output
@@ -196,7 +193,7 @@ fn output(args: &[&str]) -> Option<String> {
         .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-/// Runs docker without its output: whether it succeeded, `None` if it can't run at all
+/// `None` if docker can't run
 fn run_quietly(args: &[&str]) -> Option<bool> {
     Command::new(DOCKER)
         .args(args)

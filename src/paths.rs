@@ -1,5 +1,4 @@
-//! Path and shell helpers. Host paths are `PathBuf`s; paths inside the container, like mount targets,
-//! are `String`s that only docker reads, joined with `join`.
+//! Path and shell helpers. Host paths are `PathBuf`s, container paths `String`s joined with `join`.
 
 use std::os::unix::fs::MetadataExt;
 use std::path::{Component, Path, PathBuf};
@@ -12,7 +11,7 @@ pub fn home() -> PathBuf {
     std::env::home_dir().unwrap_or_default()
 }
 
-/// `$variable` when it's an absolute path, `~/fallback` otherwise, as the XDG Base Directory spec says
+/// `$variable` if absolute, else `~/fallback`, per the XDG spec
 pub fn xdg_dir(variable: &str, fallback: &str) -> PathBuf {
     std::env::var_os(variable)
         .map(PathBuf::from)
@@ -20,13 +19,11 @@ pub fn xdg_dir(variable: &str, fallback: &str) -> PathBuf {
         .unwrap_or_else(|| home().join(fallback))
 }
 
-/// sndbx's state, like its log
 pub fn state_dir() -> PathBuf {
     xdg_dir("XDG_STATE_HOME", ".local/state").join("sndbx")
 }
 
-/// Fails when `$HOME` is relative, or unset with no home in the user database: the XDG fallbacks and `~`
-/// would be relative to wherever sndbx runs
+/// A relative home would make the XDG fallbacks and `~` relative to the current directory
 pub fn check_home() -> Result<()> {
     if !home().is_absolute() {
         bail!("HOME is not set to an absolute path");
@@ -38,7 +35,7 @@ pub fn read_file(path: &Path) -> Result<String> {
     std::fs::read_to_string(path).with_context(|| format!("can't read {}", path.display()))
 }
 
-/// Writes the file in place, which follows a symlink and keeps its permissions, creating its directory
+/// Writes in place, following symlinks and keeping permissions
 pub fn write_file(path: &Path, content: &str) -> Result<()> {
     path.parent()
         .map_or(Ok(()), std::fs::create_dir_all)
@@ -50,8 +47,7 @@ pub fn current_dir() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/"))
 }
 
-/// Expands `~`, resolves `path` against `base`, the current directory by default,
-/// and removes `.`, `..` and repeated slashes without following symlinks.
+/// Expands `~`, resolves against `base` or the current directory, and normalizes without following symlinks
 pub fn expand_path(path: impl AsRef<Path>, base: Option<&Path>) -> PathBuf {
     let path = path.as_ref();
     let absolute = match path.strip_prefix("~") {
@@ -61,7 +57,7 @@ pub fn expand_path(path: impl AsRef<Path>, base: Option<&Path>) -> PathBuf {
     normalize(&absolute)
 }
 
-/// An absolute path without `.`, `..` or repeated slashes, like `/a/c` for `a/./b/../c/`
+/// Like `/a/c` for `a/./b/../c/`
 pub fn normalize(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::from("/");
     for component in path.components() {
@@ -76,7 +72,7 @@ pub fn normalize(path: &Path) -> PathBuf {
     normalized
 }
 
-/// Joins with one slash between parts, whatever slashes they have, like `/a/b` for `/a/` and `/b`
+/// One slash between parts, like `/a/b` for `/a/` and `/b`
 pub fn join(parts: &[&str]) -> String {
     let Some((first, rest)) = parts.split_first() else {
         return String::new();
@@ -86,7 +82,7 @@ pub fn join(parts: &[&str]) -> String {
     })
 }
 
-/// Whether both paths exist and are the same file, following symlinks
+/// Follows symlinks, false if either doesn't exist
 pub fn is_same_file(first: &Path, second: &Path) -> bool {
     match (first.metadata(), second.metadata()) {
         (Ok(first), Ok(second)) => first.dev() == second.dev() && first.ino() == second.ino(),
@@ -94,7 +90,6 @@ pub fn is_same_file(first: &Path, second: &Path) -> bool {
     }
 }
 
-/// The words as a shell command line, each escaped with `shell_escape`
 pub fn shell_join(words: &[&str]) -> String {
     words
         .iter()
@@ -103,8 +98,7 @@ pub fn shell_join(words: &[&str]) -> String {
         .join(" ")
 }
 
-/// A backslash before each character a shell treats specially, `''` for an empty word,
-/// and a newline in single quotes
+/// Backslashes special characters; `''` for an empty word, newlines in single quotes
 fn shell_escape(word: &str) -> String {
     if word.is_empty() {
         return "''".to_string();
