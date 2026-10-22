@@ -8,6 +8,10 @@ require 'rbconfig'
 require 'tmpdir'
 require 'yaml'
 
+# Tests run in threads, so they keep to their own temporary root and don't change ENV or the working directory.
+# MT_CPU=1 runs them one at a time.
+Minitest::Test.parallelize_me!
+
 module SndbxTestHelper
   # The binary to test, the debug build unless SNDBX_BIN names another, e.g. a release build
   COMMAND = [File.expand_path(ENV.fetch('SNDBX_BIN', '../target/debug/sndbx'), __dir__)].freeze
