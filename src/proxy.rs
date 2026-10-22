@@ -1,7 +1,6 @@
 //! The proxy that proxied sandboxes reach the network through: they are on an internal network
 //! with no route out, and the proxy, also on the default one, lets through only the allowed hosts, or every one
 
-use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -15,8 +14,19 @@ const CONTAINER: &str = "sndbx-proxy";
 const PORT: u16 = 3128;
 const CONFIG_TARGET: &str = "/etc/squid/squid.conf";
 const ACCESS_LOG: &str = "/var/log/squid/access.log";
+// A line each in the access log with the time like sndbx's log, the sandbox's address, how squid handled the request
+// and the HTTP status, the method and the URL, then how long it took in milliseconds and the bytes the sandbox sent
+// and got
+const LOG_FORMAT: &str = "%{%FT%T%z}tl %>a %Ss/%03>Hs %rm %ru dur=%trms in=%>st out=%<st";
 // In a denied request's line, after the time and the sandbox's address
 const DENIED: &str = " TCP_DENIED/";
+// Follows a log's lines with a text from its last ones that have it: those up to the log's size now, then the ones
+// after it, so none shows twice or goes missing. -F keeps following when the log is rotated or recreated.
+const FOLLOW_MATCHING: &str = r#"lines=$1 log=$2 text=$3
+size=$(wc -c < "$log") || exit
+head -c "$size" "$log" | grep -F -- "$text" | tail -n "$lines"
+tail -c +$((size + 1)) -F "$log" | grep --line-buffered -F -- "$text"
+"#;
 // Docker's default network, which the proxy reaches the hosts through
 const EGRESS_NETWORK: &str = "bridge";
 // Squid stops within a moment of starting when it can't run, like with a config it can't use
@@ -200,23 +210,13 @@ pub fn follow_log(lines: u64, denied: bool) -> Result<()> {
         bail!("the proxy {CONTAINER} isn't running, sndbx run starts it");
     }
     let lines = lines.to_string();
-    // With a terminal, Ctrl-C stops tail in the proxy too, not just docker. Only when the output goes to it too, -t
-    // would end piped lines in \r\n.
-    let mut args = vec!["exec"];
-    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-        args.push("-it");
-    }
-    args.push(CONTAINER);
-    if denied {
-        // The last denied lines up to the log's size now, then the ones after it, so none shows twice or goes missing
-        let script = "size=$(wc -c < \"$2\") && head -c \"$size\" \"$2\" | grep -F -- \"$3\" | tail -n \"$1\"; \
-                      tail -c +$((size + 1)) -F \"$2\" | grep --line-buffered -F -- \"$3\"";
-        args.extend(["sh", "-c", script, "sh", &lines, ACCESS_LOG, DENIED]);
+    let command: &[&str] = if denied {
+        &["sh", "-c", FOLLOW_MATCHING, "sh", &lines, ACCESS_LOG, DENIED]
     } else {
         // -F keeps following when the log is rotated or recreated
-        args.extend(["tail", "-n", &lines, "-F", ACCESS_LOG]);
-    }
-    docker::exec(&args)
+        &["tail", "-n", &lines, "-F", ACCESS_LOG]
+    };
+    docker::exec_until_interrupted(CONTAINER, command)
 }
 
 fn start_error() -> String {
@@ -224,10 +224,8 @@ fn start_error() -> String {
 }
 
 /// Squid's config: HTTP to port 80 and HTTPS to port 443 only, only to the hosts, no cache. Requests go to squid's own
-/// access log, its `proxy` user can't open the container's stdout, a line each with the time like sndbx's log, the
-/// sandbox's address, how squid handled it and the HTTP status, the method and the URL, then how long it took in
-/// milliseconds and the bytes the sandbox sent and got. Squid writes the line when the request ends, which for an
-/// HTTPS tunnel a client keeps open can be minutes after it started.
+/// access log, its `proxy` user can't open the container's stdout, a line each in `LOG_FORMAT`. Squid writes the line
+/// when the request ends, which for an HTTPS tunnel a client keeps open can be minutes after it started.
 fn config(hosts: &Hosts) -> String {
     // Squid refuses an acl without values. With -n, squid matches only the host the request names, without it
     // the reverse DNS name of an IP too, which whoever runs the IP chooses, like x.github.com.
@@ -244,10 +242,17 @@ fn config(hosts: &Hosts) -> String {
         ),
     };
     format!(
-        "http_port {PORT}\nacl SSL_ports port 443\nacl Safe_ports port 80 443\n{acl}\
-         http_access deny !Safe_ports\nhttp_access deny CONNECT !SSL_ports\n{allow}\
-         http_access deny all\ncache deny all\n\
-         logformat sndbx %{{%FT%T%z}}tl %>a %Ss/%03>Hs %rm %ru %tr %>st %<st\naccess_log {ACCESS_LOG} sndbx\n"
+        "http_port {PORT}\n\
+         acl SSL_ports port 443\n\
+         acl Safe_ports port 80 443\n\
+         {acl}\
+         http_access deny !Safe_ports\n\
+         http_access deny CONNECT !SSL_ports\n\
+         {allow}\
+         http_access deny all\n\
+         cache deny all\n\
+         logformat sndbx {LOG_FORMAT}\n\
+         access_log {ACCESS_LOG} sndbx\n"
     )
 }
 
@@ -268,7 +273,7 @@ mod tests {
              http_access allow allowed\n\
              http_access deny all\n\
              cache deny all\n\
-             logformat sndbx %{%FT%T%z}tl %>a %Ss/%03>Hs %rm %ru %tr %>st %<st\n\
+             logformat sndbx %{%FT%T%z}tl %>a %Ss/%03>Hs %rm %ru dur=%trms in=%>st out=%<st\n\
              access_log /var/log/squid/access.log sndbx\n"
         );
     }
@@ -294,8 +299,56 @@ mod tests {
              http_access allow all\n\
              http_access deny all\n\
              cache deny all\n\
-             logformat sndbx %{%FT%T%z}tl %>a %Ss/%03>Hs %rm %ru %tr %>st %<st\n\
+             logformat sndbx %{%FT%T%z}tl %>a %Ss/%03>Hs %rm %ru dur=%trms in=%>st out=%<st\n\
              access_log /var/log/squid/access.log sndbx\n"
         );
+    }
+
+    #[test]
+    fn follows_the_last_matching_lines_then_new_ones() {
+        use std::io::{BufRead, BufReader, Write};
+        use std::os::unix::process::CommandExt;
+        use std::process::{Command, Stdio};
+        use std::sync::mpsc;
+
+        let log = std::env::temp_dir().join(format!("sndbx-follow-matching-{}.log", std::process::id()));
+        std::fs::write(
+            &log,
+            "1 TCP_DENIED/403\n2 TCP_TUNNEL/200\n3 TCP_DENIED/403\n4 TCP_DENIED/403\n",
+        )
+        .unwrap();
+        // In its own process group, so killing that stops tail and grep too
+        let mut child = Command::new("sh")
+            .args(["-c", FOLLOW_MATCHING, "sh", "2", log.to_str().unwrap(), DENIED])
+            .stdout(Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let stdout = child.stdout.take().unwrap();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines() {
+                if sender.send(line.unwrap()).is_err() {
+                    break;
+                }
+            }
+        });
+        let next = || receiver.recv_timeout(Duration::from_secs(5)).unwrap_or_default();
+
+        let earlier = [next(), next()];
+        let mut file = std::fs::OpenOptions::new().append(true).open(&log).unwrap();
+        file.write_all(b"5 TCP_TUNNEL/200\n6 TCP_DENIED/403\n").unwrap();
+        let later = next();
+
+        // A negative PID is the process group, which procps' kill takes only after a signal and --
+        let killed = Command::new("kill")
+            .args(["-TERM", "--", &format!("-{}", child.id())])
+            .status()
+            .unwrap();
+        assert!(killed.success());
+        child.wait().unwrap();
+        std::fs::remove_file(&log).unwrap();
+        assert_eq!(earlier, ["3 TCP_DENIED/403", "4 TCP_DENIED/403"]);
+        assert_eq!(later, "6 TCP_DENIED/403");
     }
 }

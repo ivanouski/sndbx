@@ -1,5 +1,5 @@
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -121,6 +121,19 @@ pub fn exec<S: AsRef<str>>(args: &[S]) -> Result<()> {
     prepare(args);
     let e = Command::new(DOCKER).args(args.iter().map(AsRef::as_ref)).exec();
     Err(e).context(format!("can't run {DOCKER}"))
+}
+
+/// Replaces sndbx with the command in the container, which runs until Ctrl-C, like one following a log
+pub fn exec_until_interrupted(container: &str, command: &[&str]) -> Result<()> {
+    // With a terminal, Ctrl-C stops the command in the container too, not just docker. Only when the output goes to
+    // it too, -t would end piped lines in \r\n.
+    let mut args = vec!["exec"];
+    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+        args.push("-it");
+    }
+    args.push(container);
+    args.extend(command);
+    exec(&args)
 }
 
 /// Runs docker and waits for it, whether it succeeded
