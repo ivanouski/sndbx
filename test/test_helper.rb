@@ -15,6 +15,9 @@ module SndbxTestHelper
   # Unset, the host's would take sndbx's settings and log out of the temporary HOME
   XDG_ENV = { 'XDG_CONFIG_HOME' => nil, 'XDG_STATE_HOME' => nil }.freeze
 
+  # Unset, the fake commands, Ruby scripts, would load bundler as bundle exec does, which takes most of their time
+  BUNDLER_ENV = { 'RUBYOPT' => nil, 'BUNDLE_GEMFILE' => nil }.freeze
+
   Result = Struct.new(:out, :err, :status) do
     def success?
       status.success?
@@ -37,7 +40,7 @@ module SndbxTestHelper
 
   # Without CLICOLOR_FORCE, which would color clap's errors
   def sndbx(*args, env: {})
-    env = { 'HOME' => @home, 'PATH' => @bin, 'CLICOLOR_FORCE' => nil, **XDG_ENV }.merge(env)
+    env = { 'HOME' => @home, 'PATH' => @bin, 'CLICOLOR_FORCE' => nil, **XDG_ENV, **BUNDLER_ENV }.merge(env)
     Result.new(*Open3.capture3(env, *COMMAND, *args, chdir: @work))
   end
 

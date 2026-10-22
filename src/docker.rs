@@ -41,8 +41,6 @@ pub fn network_internal(name: &str) -> Option<bool> {
 pub struct ContainerState {
     /// Running and not waiting to restart after it exited
     pub up: bool,
-    /// How often docker restarted it after it exited
-    pub restarts: u64,
     /// The image as `docker run` was given it
     pub image: String,
     pub networks: Vec<String>,
@@ -51,7 +49,7 @@ pub struct ContainerState {
 }
 
 /// A line each, as paths may have spaces: the state, the image, the networks, then a line per mount
-const CONTAINER_STATE_FORMAT: &str = "{{.State.Running}}\n{{.State.Restarting}}\n{{.RestartCount}}\n\
+const CONTAINER_STATE_FORMAT: &str = "{{.State.Running}}\n{{.State.Restarting}}\n\
                                           {{.Config.Image}}\n\
                                           {{range $name, $network := .NetworkSettings.Networks}}{{$name}} {{end}}\n\
                                           {{range .Mounts}}{{.Source}}\n{{end}}";
@@ -62,12 +60,10 @@ pub fn container_state(name: &str) -> Option<ContainerState> {
     let mut lines = state.lines();
     let running = lines.next() == Some("true");
     let restarting = lines.next() == Some("true");
-    let restarts = lines.next()?.parse().ok()?;
     let image = lines.next()?.to_string();
     let networks = lines.next()?.split_whitespace().map(ToString::to_string).collect();
     Some(ContainerState {
         up: running && !restarting,
-        restarts,
         image,
         networks,
         mounts: lines.filter(|line| !line.is_empty()).map(ToString::to_string).collect(),
@@ -144,6 +140,20 @@ pub fn run<S: AsRef<str>>(args: &[S]) -> bool {
 /// Runs docker like `run` without its output, like the ID `docker run -d` prints; its errors still show
 pub fn run_muted<S: AsRef<str>>(args: &[S]) -> bool {
     run_with_stdout(args, Stdio::null())
+}
+
+/// Runs docker without its output, `Err` with what it printed on stderr when it fails, empty when it can't run at all
+pub fn run_collecting_errors<S: AsRef<str>>(args: &[S]) -> std::result::Result<(), String> {
+    prepare(args);
+    match Command::new(DOCKER)
+        .args(args.iter().map(AsRef::as_ref))
+        .stdin(Stdio::null())
+        .output()
+    {
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => Err(String::from_utf8_lossy(&output.stderr).into_owned()),
+        Err(_) => Err(String::new()),
+    }
 }
 
 fn run_with_stdout<S: AsRef<str>>(args: &[S], stdout: Stdio) -> bool {

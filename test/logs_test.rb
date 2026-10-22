@@ -152,7 +152,7 @@ class LogsTest < SndbxTestCase
   end
 
   def write_fake_tail
-    write_executable(File.join(@bin, 'tail'), "#!#{RbConfig.ruby}\nrequire 'json'\nputs ARGV.to_json\n")
+    write_executable(File.join(@bin, 'tail'), "#!#{RbConfig.ruby} --disable-gems\nrequire 'json'\nputs ARGV.to_json\n")
   end
 
   def log_path

@@ -33,9 +33,9 @@ class ProxyTest < SndbxTestCase
     assert_equal [network_inspect,
                   ['network', 'create', '--internal', 'sndbx-internal'],
                   proxy_inspect,
+                  proxy_parse,
                   proxy_run,
-                  %w[network connect sndbx-internal sndbx-proxy],
-                  proxy_inspect],
+                  %w[network connect sndbx-internal sndbx-proxy]],
                  proxy_calls
     assert_includes File.read(squid_conf), "acl allowed dstdomain -n .openai.com pypi.org\n"
     refute_match(/cafe|f00d/, result.out)
@@ -64,8 +64,7 @@ class ProxyTest < SndbxTestCase
 
     sndbx('run', 'claude')
 
-    assert_equal [network_inspect, proxy_inspect,
-                  %w[exec sndbx-proxy squid -k reconfigure], proxy_inspect],
+    assert_equal [network_inspect, proxy_inspect, proxy_exec_parse, %w[exec sndbx-proxy squid -k reconfigure]],
                  proxy_calls
     assert_includes File.read(squid_conf), "acl allowed dstdomain -n .openai.com .rubygems.org\n"
   end
@@ -81,8 +80,7 @@ class ProxyTest < SndbxTestCase
     File.delete(@docker_log)
     sndbx('run', 'claude')
 
-    assert_equal [network_inspect, proxy_inspect,
-                  %w[exec sndbx-proxy squid -k reconfigure], proxy_inspect],
+    assert_equal [network_inspect, proxy_inspect, proxy_exec_parse, %w[exec sndbx-proxy squid -k reconfigure]],
                  proxy_calls
   end
 
@@ -95,8 +93,8 @@ class ProxyTest < SndbxTestCase
 
     sndbx('run', 'claude')
 
-    assert_equal [network_inspect, proxy_inspect, %w[rm -f -v sndbx-proxy], proxy_run,
-                  %w[network connect sndbx-internal sndbx-proxy], proxy_inspect],
+    assert_equal [network_inspect, proxy_inspect, proxy_parse, %w[rm -f -v sndbx-proxy], proxy_run,
+                  %w[network connect sndbx-internal sndbx-proxy]],
                  proxy_calls
   end
 
@@ -104,13 +102,13 @@ class ProxyTest < SndbxTestCase
     write_proxy_settings
     write_allowed_hosts(".openai.com\n")
     sndbx('run', 'claude')
-    File.write(@docker_proxy, "false false 0 #{SQUID_IMAGE} #{squid_conf} bridge sndbx-internal")
+    File.write(@docker_proxy, "false false #{SQUID_IMAGE} #{squid_conf} bridge sndbx-internal")
     File.delete(@docker_log)
 
     sndbx('run', 'claude')
 
-    assert_equal [network_inspect, proxy_inspect, %w[rm -f -v sndbx-proxy], proxy_run,
-                  %w[network connect sndbx-internal sndbx-proxy], proxy_inspect],
+    assert_equal [network_inspect, proxy_inspect, proxy_parse, %w[rm -f -v sndbx-proxy], proxy_run,
+                  %w[network connect sndbx-internal sndbx-proxy]],
                  proxy_calls
   end
 
@@ -123,8 +121,8 @@ class ProxyTest < SndbxTestCase
 
     sndbx('run', 'claude')
 
-    assert_equal [network_inspect, proxy_inspect, %w[rm -f -v sndbx-proxy],
-                  proxy_run('ubuntu/squid:6.13'), %w[network connect sndbx-internal sndbx-proxy], proxy_inspect],
+    assert_equal [network_inspect, proxy_inspect, proxy_parse('ubuntu/squid:6.13'), %w[rm -f -v sndbx-proxy],
+                  proxy_run('ubuntu/squid:6.13'), %w[network connect sndbx-internal sndbx-proxy]],
                  proxy_calls
   end
 
@@ -179,8 +177,7 @@ class ProxyTest < SndbxTestCase
 
     sndbx('run', 'claude')
 
-    assert_equal [network_inspect, proxy_inspect,
-                  %w[exec sndbx-proxy squid -k reconfigure], proxy_inspect],
+    assert_equal [network_inspect, proxy_inspect, proxy_exec_parse, %w[exec sndbx-proxy squid -k reconfigure]],
                  proxy_calls
   end
 
@@ -199,8 +196,8 @@ class ProxyTest < SndbxTestCase
 
     sndbx('run', 'claude')
 
-    assert_equal [network_inspect, proxy_inspect, %w[rm -f -v sndbx-proxy], proxy_run,
-                  %w[network connect sndbx-internal sndbx-proxy], proxy_inspect],
+    assert_equal [network_inspect, proxy_inspect, proxy_parse, %w[rm -f -v sndbx-proxy], proxy_run,
+                  %w[network connect sndbx-internal sndbx-proxy]],
                  proxy_calls
   end
 
@@ -236,11 +233,11 @@ class ProxyTest < SndbxTestCase
   def test_a_restarting_proxy_is_replaced
     write_proxy_settings
     write_allowed_hosts(".openai.com\n")
-    File.write(@docker_proxy, "true true 3 #{SQUID_IMAGE} #{squid_conf} bridge sndbx-internal")
+    File.write(@docker_proxy, "true true #{SQUID_IMAGE} #{squid_conf} bridge sndbx-internal")
 
     assert_predicate sndbx('run', 'claude'), :success?
-    assert_equal [network_inspect, %w[network create --internal sndbx-internal], proxy_inspect,
-                  %w[rm -f -v sndbx-proxy], proxy_run, %w[network connect sndbx-internal sndbx-proxy], proxy_inspect],
+    assert_equal [network_inspect, %w[network create --internal sndbx-internal], proxy_inspect, proxy_parse,
+                  %w[rm -f -v sndbx-proxy], proxy_run, %w[network connect sndbx-internal sndbx-proxy]],
                  proxy_calls
   end
 
@@ -252,8 +249,8 @@ class ProxyTest < SndbxTestCase
 
     assert_predicate sndbx('run', 'claude'), :success?
     # The failed run didn't get to record the config as loaded, so this one loads it again
-    assert_equal [network_inspect, proxy_inspect, %w[exec sndbx-proxy squid -k reconfigure],
-                  %w[network connect sndbx-internal sndbx-proxy], proxy_inspect],
+    assert_equal [network_inspect, proxy_inspect, proxy_exec_parse, %w[exec sndbx-proxy squid -k reconfigure],
+                  %w[network connect sndbx-internal sndbx-proxy]],
                  proxy_calls
   end
 
@@ -263,7 +260,7 @@ class ProxyTest < SndbxTestCase
 
     assert_error "can't connect the proxy sndbx-proxy to the docker network sndbx-internal",
                  sndbx('run', 'claude', env: { 'DOCKER_BROKEN' => 'sndbx-internal' })
-    assert_equal [proxy_run], docker_runs
+    assert_equal [proxy_parse, proxy_run], docker_runs
   end
 
   def test_a_proxy_that_does_not_start
@@ -272,28 +269,61 @@ class ProxyTest < SndbxTestCase
 
     assert_error "can't start the proxy, see docker logs sndbx-proxy",
                  sndbx('run', 'claude', env: { 'DOCKER_BROKEN' => 'sndbx-proxy' })
-    assert_equal [proxy_run], docker_runs
+    assert_equal [proxy_parse, proxy_run], docker_runs
   end
 
-  def test_a_proxy_that_stops_after_starting
+  def test_a_missing_proxy_image_is_pulled
+    write_proxy_settings
+    write_allowed_hosts(".openai.com\n")
+    File.write(@docker_images, "sndbx:claude ubuntu\n")
+
+    assert_predicate sndbx('run', 'claude'), :success?
+    assert_equal [['pull', SQUID_IMAGE], proxy_parse, proxy_run],
+                 docker_calls.select { |call| %w[pull run].include?(call.first) }[0..2]
+  end
+
+  def test_a_proxy_image_that_can_not_be_pulled
+    write_proxy_settings
+    write_allowed_hosts(".openai.com\n")
+    File.write(@docker_images, "sndbx:claude ubuntu\n")
+
+    assert_error "can't pull the proxy image #{SQUID_IMAGE}", sndbx('run', 'claude', env: { 'DOCKER_BROKEN' => 'pull' })
+    assert_empty docker_runs
+  end
+
+  def test_a_config_squid_can_not_use_is_not_started
     write_proxy_settings
     write_allowed_hosts(".openai.com\n")
 
-    assert_error "can't start the proxy, see docker logs sndbx-proxy",
-                 sndbx('run', 'claude', env: { 'DOCKER_PROXY_CRASHES' => '1' })
-    assert_equal [proxy_run], docker_runs
+    result = sndbx('run', 'claude', env: { 'DOCKER_BROKEN' => 'parse' })
+
+    refute_predicate result, :success?
+    assert_equal "2026/10/22 10:04:58| FATAL: Bungled squid.conf line 4\n" \
+                 "Error: squid can't use the proxy's config #{squid_conf}.\n",
+                 result.err
+    assert_equal [proxy_parse], docker_runs
   end
 
-  def test_a_proxy_that_stops_after_reconfiguring
+  def test_a_config_squid_can_not_use_does_not_replace_the_proxy
+    write_proxy_settings
+    write_allowed_hosts(".openai.com\n")
+    sndbx('run', 'claude')
+    write_proxy_settings(image: 'ubuntu/squid:6.13')
+    File.delete(@docker_log)
+
+    refute_predicate sndbx('run', 'claude', env: { 'DOCKER_BROKEN' => 'parse' }), :success?
+    assert_equal [network_inspect, proxy_inspect, proxy_parse('ubuntu/squid:6.13')], proxy_calls
+  end
+
+  def test_a_config_squid_can_not_use_is_not_reloaded
     write_proxy_settings
     write_allowed_hosts(".openai.com\n")
     sndbx('run', 'claude')
     write_allowed_hosts(".openai.com\n.rubygems.org\n")
     File.delete(@docker_log)
 
-    assert_error "can't start the proxy, see docker logs sndbx-proxy",
-                 sndbx('run', 'claude', env: { 'DOCKER_PROXY_CRASHES' => '1' })
-    assert_empty docker_runs
+    refute_predicate sndbx('run', 'claude', env: { 'DOCKER_BROKEN' => 'parse' }), :success?
+    assert_equal [network_inspect, proxy_inspect, proxy_exec_parse], proxy_calls
   end
 
   def test_an_empty_allowlist_denies_everything
@@ -377,9 +407,17 @@ class ProxyTest < SndbxTestCase
 
   def proxy_inspect
     ['container', 'inspect', '--format',
-     "{{.State.Running}}\n{{.State.Restarting}}\n{{.RestartCount}}\n{{.Config.Image}}\n" \
+     "{{.State.Running}}\n{{.State.Restarting}}\n{{.Config.Image}}\n" \
      "{{range $name, $network := .NetworkSettings.Networks}}{{$name}} {{end}}\n{{range .Mounts}}{{.Source}}\n{{end}}",
      'sndbx-proxy']
+  end
+
+  def proxy_parse(image = SQUID_IMAGE)
+    ['run', '--rm', '--entrypoint=squid', '-v', "#{squid_conf}:/etc/squid/squid.conf:ro", image, '-k', 'parse']
+  end
+
+  def proxy_exec_parse
+    %w[exec sndbx-proxy squid -k parse]
   end
 
   def proxy_run(image = SQUID_IMAGE)
@@ -390,12 +428,13 @@ class ProxyTest < SndbxTestCase
   def write_proxy_settings(image: SQUID_IMAGE, **proxy)
     write_settings(proxy: { image: image, **proxy }, images: [{ name: 'claude' }])
     add_docker_image('sndbx:claude')
+    add_docker_image(image, user: 'proxy')
   end
 
   # The docker calls between checking the image and running the sandbox
   def proxy_calls
     docker_calls.reject do |call|
-      call == ['info'] || call.first(2) == %w[image inspect] || call.first(2) == %w[run --rm]
+      call == ['info'] || call.first(2) == %w[image inspect] || call.first(3) == %w[run --rm -it]
     end
   end
 end

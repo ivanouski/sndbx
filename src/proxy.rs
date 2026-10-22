@@ -2,7 +2,6 @@
 //! with no route out, and the proxy, also on the default one, lets through only the allowed hosts, or every one
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use anyhow::{Context, bail};
 
@@ -29,8 +28,6 @@ tail -c +$((size + 1)) -F "$log" | grep --line-buffered -F -- "$text"
 "#;
 // Docker's default network, which the proxy reaches the hosts through
 const EGRESS_NETWORK: &str = "bridge";
-// Squid stops within a moment of starting when it can't run, like with a config it can't use
-const STARTUP_CHECK_DELAY: Duration = Duration::from_secs(1);
 
 /// The proxy's URL in the internal network
 fn url() -> String {
@@ -89,11 +86,8 @@ pub fn ensure(proxy: &Proxy) -> Result<()> {
     let content = config(&proxy.hosts);
     let config = write_config(&content)?;
     create_network()?;
-    let (state, loaded) = start(&proxy.image, &config)?;
+    let state = start(&proxy.image, &config)?;
     connect(&state.networks)?;
-    if loaded {
-        check_up(state.restarts)?;
-    }
     if config != Config::Loaded {
         paths::write_file(&loaded_config_path(), &content)?;
     }
@@ -134,44 +128,53 @@ fn create_network() -> Result<()> {
     }
 }
 
-/// Runs the proxy from `image` unless it's up with it, or reloads its config when it changed.
-/// Its state, and whether it loaded a config, which `check_up` then checks it survived.
-fn start(image: &str, config: &Config) -> Result<(ContainerState, bool)> {
+/// Runs the proxy from `image` unless it's up with it, or reloads its config when it changed, its state
+fn start(image: &str, config: &Config) -> Result<ContainerState> {
     match container_state(CONTAINER) {
         Some(state) if state.up && state.image == image && mounts_config(&state) && *config != Config::Created => {
-            Ok((state, reload(config)?))
+            reload(config)?;
+            Ok(state)
         }
         // A stopped proxy may be on a network that was removed since, which keeps it from starting,
         // one that keeps restarting doesn't run, one from another image isn't the configured one,
         // and one that mounts another config file, like from another XDG_STATE_HOME, or one that's gone
         // can't load the new one, so they're all replaced
-        state => Ok((replace(state.is_some(), image)?, true)),
+        state => replace(state.is_some(), image),
     }
 }
 
-/// Has the running proxy reload its config when it changed, whether it did
-fn reload(config: &Config) -> Result<bool> {
-    let changed = *config == Config::Changed;
-    if changed && !docker::run_muted(&["exec", CONTAINER, "squid", "-k", "reconfigure"]) {
+/// Has the running proxy reload its config when it changed and squid can use it
+fn reload(config: &Config) -> Result<()> {
+    if *config != Config::Changed {
+        return Ok(());
+    }
+    check_config(&["exec", CONTAINER, "squid", "-k", "parse"])?;
+    if !docker::run_muted(&["exec", CONTAINER, "squid", "-k", "reconfigure"]) {
         bail!(start_error());
     }
-    Ok(changed)
+    Ok(())
 }
 
-/// Runs the proxy from `image`, after removing the one there is when `exists`, its state as it starts
+/// Runs the proxy from `image` when squid can use its config, after removing the one there is when `exists`, its
+/// state as it starts
 fn replace(exists: bool, image: &str) -> Result<ContainerState> {
+    // With its progress showing, which checking the config would pull it without, and its own error
+    if !docker::image_exists(image) && !docker::run(&["pull", image]) {
+        bail!("can't pull the proxy image {image}");
+    }
+    let volume = format!("{}:{CONFIG_TARGET}:ro", config_path().display());
+    // Before removing the proxy there is, which keeps running with the config it has when squid can't use this one
+    check_config(&["run", "--rm", "--entrypoint=squid", "-v", &volume, image, "-k", "parse"])?;
     // With its anonymous volumes, the squid image's log and cache, which would pile up otherwise
     if exists && !docker::run_muted(&["rm", "-f", "-v", CONTAINER]) {
         bail!("can't remove the proxy {CONTAINER} to replace it");
     }
-    let volume = format!("{}:{CONFIG_TARGET}:ro", config_path().display());
     let restart = "--restart=unless-stopped";
     if !docker::run_muted(&["run", "-d", "--name", CONTAINER, restart, "-v", &volume, image]) {
         bail!(start_error());
     }
     Ok(ContainerState {
         up: true,
-        restarts: 0,
         image: image.to_string(),
         networks: vec![EGRESS_NETWORK.to_string()],
         mounts: vec![config_path().display().to_string()],
@@ -195,13 +198,22 @@ fn connect(networks: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Checks that squid still runs a moment after loading its config, not restarted since `restarts`
-fn check_up(restarts: u64) -> Result<()> {
-    std::thread::sleep(STARTUP_CHECK_DELAY);
-    if !container_state(CONTAINER).is_some_and(|state| state.up && state.restarts == restarts) {
-        bail!(start_error());
+/// Has squid parse its config with the docker `args`, which it would stop on at start when it can't use it. Squid
+/// prints a line for each directive, so only its errors show, or all docker printed when it has none, like docker's own.
+fn check_config(args: &[&str]) -> Result<()> {
+    let Err(output) = docker::run_collecting_errors(args) else {
+        return Ok(());
+    };
+    let errors: Vec<&str> = output
+        .lines()
+        .filter(|line| line.contains("| ERROR: ") || line.contains("| FATAL: "))
+        .collect();
+    if errors.is_empty() {
+        eprint!("{output}");
+    } else {
+        eprintln!("{}", errors.join("\n"));
     }
-    Ok(())
+    bail!("squid can't use the proxy's config {}", config_path().display());
 }
 
 /// Follows the running proxy's access log from its last `lines` lines, only the denied requests' with `denied`
@@ -259,6 +271,7 @@ fn config(hosts: &Hosts) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn configs() {

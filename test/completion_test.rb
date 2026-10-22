@@ -20,7 +20,7 @@ class CompletionTest < Minitest::Test
   # Speaks docker's cobra completion protocol with the output in DOCKER_COMPLETIONS,
   # fails like docker before 26 without it.
   FAKE_DOCKER = <<~RUBY
-    #!#{RbConfig.ruby}
+    #!#{RbConfig.ruby} --disable-gems
     require 'json'
 
     File.write(ENV.fetch('DOCKER_LOG'), "\#{ARGV.to_json}\\n", mode: 'a')

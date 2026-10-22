@@ -8,7 +8,7 @@ class SndbxTestCase < Minitest::Test
   include SndbxTestHelper
 
   FAKE_DOCKER = <<~RUBY
-    #!#{RbConfig.ruby}
+    #!#{RbConfig.ruby} --disable-gems
     require 'json'
 
     File.write(ENV.fetch('DOCKER_LOG'), "\#{ARGV.to_json}\\n", mode: 'a')
@@ -49,22 +49,28 @@ class SndbxTestCase < Minitest::Test
       puts 'cafe' * 16
     in ['container', 'inspect', '--format', _, 'sndbx-proxy']
       exit(false) unless File.exist?(proxy_path)
-      running, restarting, restarts, image, mount, *networks = File.read(proxy_path).split
-      puts running, restarting, restarts, image, networks.join(' '), mount
+      running, restarting, image, mount, *networks = File.read(proxy_path).split
+      puts running, restarting, image, networks.join(' '), mount
     in ['run', '-d', '--name', 'sndbx-proxy', *]
       exit(false) if ENV['DOCKER_BROKEN'] == 'sndbx-proxy'
-      state = ENV.key?('DOCKER_PROXY_CRASHES') ? 'true true 1' : 'true false 0'
       mount = ARGV[ARGV.index('-v') + 1].split(':').first
-      File.write(proxy_path, "\#{state} \#{ARGV.last} \#{mount} bridge")
+      File.write(proxy_path, "true false \#{ARGV.last} \#{mount} bridge")
       puts 'f00d' * 16
     in ['network', 'connect', network, 'sndbx-proxy']
       exit(false) if ENV['DOCKER_BROKEN'] == network
       File.write(proxy_path, "\#{File.read(proxy_path)} \#{network}")
     in ['exec', 'sndbx-proxy', 'squid', '-k', 'reconfigure']
       exit(false) if ENV['DOCKER_BROKEN'] == 'reconfigure'
-      File.write(proxy_path, File.read(proxy_path).sub(/\\Atrue false 0/, 'true true 1')) if ENV.key?('DOCKER_PROXY_CRASHES')
+    in ['exec', 'sndbx-proxy', 'squid', '-k', 'parse'] | ['run', '--rm', '--entrypoint=squid', *, '-k', 'parse']
+      if ENV['DOCKER_BROKEN'] == 'parse'
+        warn '2026/10/22 10:04:58| Processing: http_port 3128', '2026/10/22 10:04:58| FATAL: Bungled squid.conf line 4'
+        exit(false)
+      end
     in ['rm', '-f', 'sndbx-proxy']
       File.delete(proxy_path)
+    in ['pull', image]
+      exit(false) if ENV['DOCKER_BROKEN'] == 'pull'
+      File.write(images_path, "\#{image}\\n", mode: 'a')
     in ['build', *, '-t', tag, _]
       exit(false) if ENV['DOCKER_BROKEN'] == tag
       File.write(images_path, "\#{tag}\\n", mode: 'a')
