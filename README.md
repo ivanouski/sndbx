@@ -24,6 +24,12 @@ cp completions/_sndbx ~/.local/share/bash-completion/completions/sndbx   # with 
 # or source completions/_sndbx in ~/.bashrc
 ```
 
+Or the zsh completion. It completes arguments after `--` with docker's zsh completion if it's installed.
+
+```sh
+fpath=(~/src/sndbx/completions/zsh $fpath)   # in ~/.zshrc before compinit, or copy completions/zsh/_sndbx to a directory in fpath
+```
+
 ## Configure
 
 Settings live in `~/.config/sndbx/settings.yml` (`$XDG_CONFIG_HOME/sndbx/` if set). `run` creates an example when there's none, and `build` creates it with the image it built. Relative paths resolve against the settings directory. Unknown keys are an error, so typos don't go unnoticed.
@@ -205,7 +211,7 @@ bundle exec rake                           # rustfmt, clippy, unit tests, ruboco
 bundle exec ruby test/completion_test.rb   # one file, against the last build
 ```
 
-The tests run `target/debug/sndbx` (or `$SNDBX_BIN`) with a temporary `HOME` and a fake `docker`, so they need neither Docker nor existing settings.
+The tests run `target/debug/sndbx` (or `$SNDBX_BIN`) with a temporary `HOME` and a fake `docker`, so they need neither Docker nor existing settings. The zsh completion tests need zsh and are skipped without it.
 
 ## License
 

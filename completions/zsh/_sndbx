@@ -1,0 +1,224 @@
+#compdef sndbx
+
+# Zsh completion for sndbx. Arguments after `run ... --` complete with docker's own zsh completion if it's
+# installed, files otherwise.
+
+# Completes the names `sndbx list` prints for the arguments after $1 and $2, the tag and its description
+_sndbx_names() {
+  local tag=$1 descr=$2 expl
+  local -a names
+  shift 2
+  names=(${(f)"$(_call_program $tag sndbx list ${(q)@} 2>/dev/null)"})
+  _wanted $tag expl $descr compadd -a names
+}
+
+# Completes the images `sndbx list $1` prints that aren't on the line yet
+_sndbx_new_images() {
+  local expl
+  local -a names given=(${words[2,CURRENT-1]:#-*})
+  names=(${(f)"$(_call_program images sndbx list $1 2>/dev/null)"})
+  _wanted images expl image compadd -- ${names:|given}
+}
+
+# Adds the workdir names for the volume SRC[:DST[:OPTS]] in $1 to the caller's workdirs,
+# and sets its has_workspace when the volume is in the workspace
+_sndbx_add_workdir() {
+  # MOUNT_ROOT in the Rust code
+  local -r mount_root=/workspace
+  local value=${(Q)1} dir target
+
+  dir=${${value%%:*}/#\~/$HOME}
+  [[ -d $dir ]] || return 0
+  [[ $value == *:* ]] && target=${${value#*:}%%:*}
+
+  # Workdir names a volume in the workspace by its path there, any other by its absolute path
+  if [[ -z $target ]]; then
+    workdirs+=(${dir:a:t})
+    has_workspace=1
+  elif [[ $target == $mount_root/* ]]; then
+    workdirs+=(${target#$mount_root/})
+    has_workspace=1
+  else
+    [[ $target == $mount_root ]] && has_workspace=1
+    workdirs+=($target)
+  fi
+}
+
+# Completes the workdir names of the volumes on the line
+_sndbx_workdirs() {
+  local has_workspace=0 i expl
+  local -a workdirs
+
+  for (( i = 2; i < CURRENT; i++ )); do
+    case $words[i] in
+      -v|--volume) _sndbx_add_workdir "$words[++i]" ;;
+      --volume=*) _sndbx_add_workdir "${words[i]#*=}" ;;
+      -v?*) _sndbx_add_workdir "${words[i]#-v}" ;;
+      -w|--workdir|-p|--publish) (( i++ )) ;;
+    esac
+  done
+
+  # The current directory is mounted unless a volume is in the workspace
+  (( has_workspace )) || workdirs+=(${PWD:t})
+  _wanted workdirs expl workdir compadd -a workdirs
+}
+
+# Completes the docker run arguments from words[$1] on with docker's completion
+_sndbx_docker_args() {
+  words=(docker run "${(@)words[$1,-1]}")
+  (( CURRENT -= $1 - 3 ))
+  _normal
+}
+
+_sndbx_run() {
+  local i=${words[(i)--]}
+  if (( i < CURRENT )); then
+    _sndbx_docker_args $(( i + 1 ))
+    return
+  fi
+
+  _arguments -s \
+    '*'{-v+,--volume=}'[mount SRC at DST, /workspace/<basename> by default]:volume:{_sndbx_volume}' \
+    '(-w --workdir)'{-w+,--workdir=}'[start in a directory volume]:workdir:{_sndbx_workdirs}' \
+    '*'{-p+,--publish=}'[publish a port as HOST:CONTAINER]:port: ' \
+    '(-k --keep)'{-k,--keep}'[keep the container after it exits]' \
+    '(- *)'{-h,--help}'[print help]' \
+    '1:image:{_sndbx_names images image configured}'
+}
+
+# Completes SRC with directories, nothing completes DST or OPTS
+_sndbx_volume() {
+  [[ $PREFIX == *:* ]] && return 1
+  _path_files -/
+}
+
+_sndbx_exec() {
+  local i count=0 options_done=0
+
+  # Count the arguments before the current word, skipping option values; nothing completes from COMMAND on
+  for (( i = 2; i < CURRENT && count < 3; i++ )); do
+    case $options_done:$words[i] in
+      0:(-u|--user)) (( i++ )) ;;
+      0:--) options_done=1 ;;
+      0:-*) ;;
+      *) (( count++ )) ;;
+    esac
+  done
+  # After --, the third argument comes next
+  (( count >= 3 || options_done && count >= 2 )) && return 1
+
+  _arguments -s -S \
+    '(-u --user)'{-u+,--user=}'[run COMMAND as USER]:user: ' \
+    '(- *)'{-h,--help}'[print help]' \
+    '1:image:{_sndbx_names images image configured}' \
+    '2:container:{_sndbx_names containers container running $line[1]}' \
+    '3:command: '
+}
+
+_sndbx_list() {
+  local curcontext=$curcontext state line ret=1
+  local -a what=(
+    'configured:images in the settings, which run, exec and resume take'
+    'buildable:images in images_dir, which build takes'
+    "running:IMAGE's running sandboxes, which exec takes"
+    "stopped:IMAGE's stopped sandboxes, which resume takes"
+  )
+
+  _arguments -C \
+    '(- *)'{-h,--help}'[print help]' \
+    '1:what:->what' \
+    '*:: :->args' && ret=0
+
+  case $state in
+    what) _describe -t what 'what to list' what && ret=0 ;;
+    args)
+      curcontext=${curcontext%:*}-$words[1]:
+      case $words[1] in
+        running|stopped)
+          _arguments '(- *)'{-h,--help}'[print help]' '1:image:{_sndbx_names images image configured}' && ret=0
+          ;;
+        *) _arguments '(- *)'{-h,--help}'[print help]' && ret=0 ;;
+      esac
+      ;;
+  esac
+  return ret
+}
+
+_sndbx_logs() {
+  local curcontext=$curcontext state line ret=1
+  local -a what=(
+    'commands:the docker commands sndbx ran'
+    "proxy:the requests the proxy let through or denied"
+  )
+  local -a common=(
+    '(-n --lines)'{-n+,--lines=}'[start with the last N lines]:N: '
+    '(- *)'{-h,--help}'[print help]'
+  )
+
+  _arguments -C \
+    '(- *)'{-h,--help}'[print help]' \
+    '1:what:->what' \
+    '*:: :->args' && ret=0
+
+  case $state in
+    what) _describe -t what 'what to follow' what && ret=0 ;;
+    args)
+      curcontext=${curcontext%:*}-$words[1]:
+      case $words[1] in
+        commands) _arguments $common && ret=0 ;;
+        proxy) _arguments $common '(-d --denied)'{-d,--denied}'[only the requests the proxy denied]' && ret=0 ;;
+      esac
+      ;;
+  esac
+  return ret
+}
+
+_sndbx() {
+  local curcontext=$curcontext state line ret=1
+  local -a commands=(
+    'run:run a sandboxed image'
+    'build:build images'
+    'rm:remove images'
+    'exec:run a command in a running sandbox'
+    'resume:restart a stopped sandbox'
+    'list:print image or sandbox names'
+    "logs:follow the docker commands sndbx ran or the proxy's requests"
+  )
+
+  _arguments -C \
+    '(- *)'{-h,--help}'[print help]' \
+    '(- *)'{-V,--version}'[print version]' \
+    '1:command:->command' \
+    '*:: :->args' && ret=0
+
+  case $state in
+    command) _describe -t commands command commands && ret=0 ;;
+    args)
+      curcontext=${curcontext%:*:*}:sndbx-$words[1]:
+      case $words[1] in
+        run) _sndbx_run && ret=0 ;;
+        build)
+          _arguments -s \
+            '(-b --rebuild-base)'{-b,--rebuild-base}'[rebuild base before the images, even if it exists]' \
+            '(- *)'{-h,--help}'[print help]' \
+            '*:image:{_sndbx_new_images buildable}' && ret=0
+          ;;
+        rm)
+          _arguments '(- *)'{-h,--help}'[print help]' '*:image:{_sndbx_new_images configured}' && ret=0
+          ;;
+        exec) _sndbx_exec && ret=0 ;;
+        resume)
+          _arguments \
+            '(- *)'{-h,--help}'[print help]' \
+            '1:image:{_sndbx_names images image configured}' \
+            '2:container:{_sndbx_names containers container stopped $line[1]}' && ret=0
+          ;;
+        list) _sndbx_list && ret=0 ;;
+        logs) _sndbx_logs && ret=0 ;;
+      esac
+      ;;
+  esac
+  return ret
+}
+
+_sndbx "$@"
