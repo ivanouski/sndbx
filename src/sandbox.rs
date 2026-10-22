@@ -86,33 +86,33 @@ impl Sandbox {
         if let Some(proxy) = &self.proxy {
             proxy::ensure(proxy)?;
         }
+        docker::exec(&self.run_args(&config_target))
+    }
 
-        let label = format!("--label={IMAGE_LABEL}={}", self.image.name);
-        let workdir_arg = format!("--workdir={}", self.workdir);
-        let volumes = self.volume_specs(&config_target);
-        // Before the docker args, so those can override the variables
-        let proxy_args = if self.proxy.is_some() {
-            proxy::run_args()
-        } else {
-            Vec::new()
-        };
-
-        let mut args = vec!["run"];
+    /// The `docker run` arguments with the config directory mounted at `config_target`
+    fn run_args(&self, config_target: &str) -> Vec<String> {
+        let mut args = vec!["run".to_string()];
         if !self.keep {
-            args.push("--rm");
+            args.push("--rm".to_string());
         }
-        args.extend(["-it", &label, &workdir_arg]);
-        for volume in &volumes {
-            args.extend(["-v", volume]);
+        args.extend([
+            "-it".to_string(),
+            format!("--label={IMAGE_LABEL}={}", self.image.name),
+            format!("--workdir={}", self.workdir),
+        ]);
+        for volume in self.volume_specs(config_target) {
+            args.extend(["-v".to_string(), volume]);
         }
         for port in &self.ports {
-            args.extend(["-p", port]);
+            args.extend(["-p".to_string(), port.clone()]);
         }
-        args.extend(proxy_args.iter().map(String::as_str));
-        args.extend(self.docker_args.iter().map(String::as_str));
-        args.push(&self.image.tag);
-
-        docker::exec(&args)
+        // Before the docker args, so those can override the variables
+        if self.proxy.is_some() {
+            args.extend(proxy::run_args());
+        }
+        args.extend(self.docker_args.iter().cloned());
+        args.push(self.image.tag.clone());
+        args
     }
 
     /// Each volume as docker's `SRC:DST[:OPTS]`, the image's config directory last
@@ -344,6 +344,67 @@ mod tests {
         for uid in ["1000", "1000:1000"] {
             assert_eq!(home(uid), None, "{uid}");
         }
+    }
+
+    fn sandbox(keep: bool, proxy: Option<Proxy>) -> Sandbox {
+        Sandbox {
+            image: Image {
+                name: "dev".to_string(),
+                tag: "sndbx-dev".to_string(),
+                config_dir: PathBuf::from("/config/dev"),
+                user: None,
+                config_target: ".claude".to_string(),
+                ports: Vec::new(),
+                docker_args: Vec::new(),
+                proxy: proxy.is_some(),
+            },
+            keep,
+            docker_args: vec!["--env=FOO=bar".to_string()],
+            volumes: vec![Volume {
+                source: PathBuf::from("/src/app"),
+                target: "/workspace/app".to_string(),
+                options: Some("ro".to_string()),
+            }],
+            ports: vec!["3000:3000".to_string()],
+            workdir: "/workspace/app".to_string(),
+            proxy,
+        }
+    }
+
+    #[test]
+    fn run_args() {
+        assert_eq!(
+            sandbox(false, None).run_args("/home/ubuntu/.claude"),
+            [
+                "run",
+                "--rm",
+                "-it",
+                &format!("--label={IMAGE_LABEL}=dev"),
+                "--workdir=/workspace/app",
+                "-v",
+                "/src/app:/workspace/app:ro",
+                "-v",
+                "/config/dev:/home/ubuntu/.claude",
+                "-p",
+                "3000:3000",
+                "--env=FOO=bar",
+                "sndbx-dev",
+            ]
+        );
+    }
+
+    #[test]
+    fn run_args_keep_the_container_and_put_the_proxy_before_the_docker_args() {
+        let proxy = Proxy {
+            image: "squid".to_string(),
+            hosts: proxy::Hosts::All,
+        };
+        let args = sandbox(true, Some(proxy)).run_args("/home/ubuntu/.claude");
+        assert!(!args.contains(&"--rm".to_string()));
+        let proxy_args = proxy::run_args();
+        let start = args.iter().position(|arg| *arg == proxy_args[0]).unwrap();
+        assert_eq!(args[start..start + proxy_args.len()], proxy_args);
+        assert_eq!(args[start + proxy_args.len()..], ["--env=FOO=bar", "sndbx-dev"]);
     }
 
     #[test]

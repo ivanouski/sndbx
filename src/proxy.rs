@@ -11,6 +11,10 @@ use crate::{Result, paths};
 const NETWORK: &str = "sndbx-internal";
 const CONTAINER: &str = "sndbx-proxy";
 const PORT: u16 = 3128;
+// The variables tools read the proxy's address from, and the ones with the hosts they reach without it
+const PROXY_ENV: [&str; 4] = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"];
+const PROXY_BYPASS_ENV: [&str; 2] = ["NO_PROXY", "no_proxy"];
+const PROXY_BYPASS_HOSTS: &str = "localhost,127.0.0.1,::1";
 const CONFIG_TARGET: &str = "/etc/squid/squid.conf";
 const ACCESS_LOG: &str = "/var/log/squid/access.log";
 // A line each in the access log with the time like sndbx's log, the sandbox's address, how squid handled the request
@@ -40,11 +44,11 @@ fn url() -> String {
 pub fn run_args() -> Vec<String> {
     let url = url();
     let mut args = vec![format!("--network={NETWORK}")];
-    for variable in ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] {
+    for variable in PROXY_ENV {
         args.push(format!("--env={variable}={url}"));
     }
-    for variable in ["NO_PROXY", "no_proxy"] {
-        args.push(format!("--env={variable}=localhost,127.0.0.1,::1"));
+    for variable in PROXY_BYPASS_ENV {
+        args.push(format!("--env={variable}={PROXY_BYPASS_HOSTS}"));
     }
     args
 }
