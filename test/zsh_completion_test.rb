@@ -8,33 +8,49 @@ class ZshCompletionTest < Minitest::Test
 
   COMPLETION_DIR = File.expand_path('../completions/zsh', __dir__)
 
+  COMMANDS = [[], ['run'], ['build'], ['rm'], ['exec'], ['resume'], ['list'], %w[list running], %w[list stopped],
+              ['logs'], %w[logs commands], %w[logs proxy]].freeze
+
   # zsh with zpty, which types the line into an interactive zsh
   ZSH = system('zsh', '-fc', 'zmodload zsh/zpty', out: File::NULL, err: File::NULL)
 
-  # Types the line and a tab into an interactive zsh, then prints the matches the completion offered
+  # compinit's dump with the completion, made once: compinit loads it in milliseconds, scanning fpath takes 100ms
+  DUMP = if ZSH
+           File.join(Dir.mktmpdir, 'zcompdump').tap do |dump|
+             Minitest.after_run { FileUtils.remove_entry(File.dirname(dump)) }
+             system({ 'COMPLETION_DIR' => COMPLETION_DIR, 'DUMP' => dump }, 'zsh', '-fc',
+                    'fpath=($COMPLETION_DIR $fpath); autoload -Uz compinit; compinit -u -d $DUMP', exception: true)
+           end
+         end
+
+  # Types the line and a tab into an interactive zsh, whose compadd records the matches in SNDBX_ZSH_OUT
   COMPLETE = <<~'ZSH'
-    zmodload zsh/zpty || exit 1
+    zmodload zsh/zpty zsh/zselect || exit 1
     zpty z zsh -f -i
     zpty -w z 'eval "$SNDBX_ZSH_SETUP"'
     zpty -w -n z "$1"$'\t'
-    for (( n = 0; n < 400; n++ )); do
+    # Up to 20 seconds, in hundredths
+    for (( n = 0; n < 2000; n++ )); do
       [[ -e $SNDBX_ZSH_DONE ]] && break
       zpty -rt z output
-      sleep 0.05
+      zselect -t 1
     done
     zpty -d z
     [[ -e $SNDBX_ZSH_DONE ]] || { print -u2 'completion timed out'; exit 1 }
-    [[ -e $SNDBX_ZSH_OUT ]] && cat $SNDBX_ZSH_OUT
     exit 0
   ZSH
 
-  # Loads the completion system, and records the matches compadd offers, except when it only collects them
-  # for its caller with -O, -A or -D
+  # Loads the completion system from the dump, adds docker's completion when the test has one, and records the
+  # matches compadd offers, except when it only collects them for its caller with -O, -A or -D
   SETUP = <<~'ZSH'
     exec 2>>$SNDBX_ZSH_ERR
     PS1= RPS1=
-    fpath=(${=SNDBX_ZSH_FPATH} $fpath)
-    autoload -Uz compinit && compinit -u -D
+    fpath=($SNDBX_ZSH_COMPLETION_DIR $fpath)
+    autoload -Uz compinit && compinit -C -d $SNDBX_ZSH_DUMP
+    if [[ -n $SNDBX_ZSH_DOCKER_DIR ]]; then
+      fpath=($SNDBX_ZSH_DOCKER_DIR $fpath)
+      autoload -Uz _docker && compdef _docker docker
+    fi
     zstyle ':completion:*' completer _complete
     compadd() {
       if [[ ${@[1,(i)(-|--)]} == *-(O|A|D)\ * ]]; then
@@ -73,7 +89,6 @@ class ZshCompletionTest < Minitest::Test
     @docker_log = File.join(@root, 'docker.log')
     @docker_containers = File.join(@root, 'docker-containers')
     @docker_completion_log = File.join(@root, 'docker-completion.log')
-    @fpath = [COMPLETION_DIR]
 
     write_executable(File.join(@bin, 'sndbx'), "#!/bin/sh\nexec #{Shellwords.join(COMMAND)} \"$@\"\n")
     write_executable(File.join(@bin, 'docker'), FAKE_DOCKER)
@@ -84,9 +99,20 @@ class ZshCompletionTest < Minitest::Test
   end
 
   def test_options_match_help
-    [[], ['run'], ['build'], ['rm'], ['exec'], ['resume'], ['list'], %w[list running], ['logs'], %w[logs commands],
-     %w[logs proxy]].each do |command|
+    COMMANDS.each do |command|
       assert_equal help_options(*command), complete([*command, '-'].join(' ')), "options of sndbx #{command.join(' ')}"
+    end
+  end
+
+  # Each description is the start of the help's, so a changed help fails here until the completion follows
+  def test_descriptions_match_help
+    help = help_descriptions
+    descriptions = completion_descriptions
+
+    assert_equal help.keys.sort, descriptions.map(&:first).uniq.sort
+    descriptions.each do |name, description|
+      refute_empty description, name
+      assert help.fetch(name).start_with?(description), "#{name}: #{description} doesn't start #{help.fetch(name)}"
     end
   end
 
@@ -305,6 +331,22 @@ class ZshCompletionTest < Minitest::Test
     assert_equal %w[api], complete("run -v #{api} -v #{File.join(@root, 'missing')} -w ")
   end
 
+  def test_workdir_completes_grouped_and_attached_volumes
+    api = mkdir('work/api')
+    mkdir('work/web')
+    mkdir('work/sdk')
+
+    assert_equal %w[api sdk web], complete("run -kv #{api} -v../web -v=../sdk -w ")
+    assert_equal %w[project], complete('run claude -kw ')
+  end
+
+  def test_grouped_volume_completes_directories
+    mkdir('work/project/src')
+    File.write(File.join(@work, 'README.md'), '')
+
+    assert_equal %w[src], complete('run -kv ')
+  end
+
   def test_workdir_with_equals_sign
     api = mkdir('work/api')
 
@@ -320,7 +362,8 @@ class ZshCompletionTest < Minitest::Test
     done_path = File.join(@root, 'zsh-done')
     [out_path, err_path, done_path].each { |path| FileUtils.rm_f(path) }
     env = { 'HOME' => @home, 'PATH' => "#{@bin}:#{ENV.fetch('PATH')}", 'SNDBX_ZSH_SETUP' => SETUP,
-            'SNDBX_ZSH_FPATH' => @fpath.join(' '), 'SNDBX_ZSH_OUT' => out_path, 'SNDBX_ZSH_ERR' => err_path,
+            'SNDBX_ZSH_COMPLETION_DIR' => COMPLETION_DIR, 'SNDBX_ZSH_DUMP' => DUMP,
+            'SNDBX_ZSH_DOCKER_DIR' => @docker_completion_dir, 'SNDBX_ZSH_OUT' => out_path, 'SNDBX_ZSH_ERR' => err_path,
             'SNDBX_ZSH_DONE' => done_path, 'DOCKER_LOG' => @docker_log, 'DOCKER_CONTAINERS' => @docker_containers,
             'DOCKER_COMPLETION_LOG' => @docker_completion_log, **XDG_ENV, **BUNDLER_ENV }
     _out, err, status = Open3.capture3(env, 'zsh', '-f', '-c', COMPLETE, 'zsh', "sndbx #{line}", chdir: @work)
@@ -330,25 +373,32 @@ class ZshCompletionTest < Minitest::Test
     File.exist?(out_path) ? File.readlines(out_path, chomp: true).uniq.sort : []
   end
 
-  def help_options(*command)
-    sndbx(*command, '-h').out.lines
-                         .map(&:strip)
-                         .select { |line| line.start_with?('-') }
-                         .flat_map { |line| line.split(/\s{2,}/).first.scan(/-[-\w]+/) }
-                         .sort
-  end
-
   def write_docker_completion
-    dir = mkdir('zsh-functions')
-    File.write(File.join(dir, '_docker'), FAKE_DOCKER_COMPLETION)
-    @fpath << dir
+    @docker_completion_dir = mkdir('zsh-functions')
+    File.write(File.join(@docker_completion_dir, '_docker'), FAKE_DOCKER_COMPLETION)
   end
 
-  def docker_calls
-    File.readlines(@docker_log).map { |line| JSON.parse(line) }
+  # Option and command names to their descriptions in sndbx's help
+  def help_descriptions
+    COMMANDS.each_with_object({}) do |command, descriptions|
+      section = nil
+      sndbx(*command, '-h').out.each_line(chomp: true) do |line|
+        section = line unless line.start_with?(' ')
+        next unless line.start_with?('  ') && ['Options:', 'Commands:'].include?(section)
+
+        names, description = line.strip.split(/\s{2,}/, 2)
+        names.scan(/-[-\w]+|\A\w+\z/).each { |name| descriptions[name] = description }
+      end
+    end
   end
 
-  def write_images_settings
-    write_settings(images: [{ name: 'claude', user: 'ubuntu' }, { name: 'codex', user: 'ubuntu' }])
+  # Option and command names with their descriptions in the completion, like {-v+,--volume=}'[Mount ...]'
+  # and 'run:Run a sandboxed image'
+  def completion_descriptions
+    content = File.read(File.join(COMPLETION_DIR, '_sndbx'))
+    options = content.scan(/\{(-\w)\+?,(--[\w-]+)=?\}['"]\[([^\]]*)\]/).flat_map do |short, long, description|
+      [[short, description], [long, description]]
+    end
+    options + content.scan(/^\s+(['"])([a-z]+):(.+)\1$/).map { |_quote, name, description| [name, description] }
   end
 end

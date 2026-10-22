@@ -12,6 +12,38 @@ require 'yaml'
 # MT_CPU=1 runs them one at a time.
 Minitest::Test.parallelize_me!
 
+# Lists the slowest tests after the summary, so a test that slows the suite down shows up in the next run
+module SlowestTests
+  COUNT = 5
+
+  class Reporter < Minitest::AbstractReporter
+    def initialize(io)
+      super()
+      @io = io
+      @results = []
+    end
+
+    # Called from the test threads
+    def record(result)
+      @mutex.synchronize { @results << result }
+    end
+
+    def report
+      return if @results.empty?
+
+      @io.puts "\nSlowest tests:"
+      @results.max_by(COUNT, &:time).each do |result|
+        @io.puts format('  %<time>.2fs  %<test>s', time: result.time, test: result.location)
+      end
+    end
+  end
+
+  def self.minitest_plugin_init(options)
+    Minitest.reporter << Reporter.new(options[:io])
+  end
+end
+Minitest.register_plugin(SlowestTests)
+
 module SndbxTestHelper
   # The binary to test, the debug build unless SNDBX_BIN names another, e.g. a release build
   COMMAND = [File.expand_path(ENV.fetch('SNDBX_BIN', '../target/debug/sndbx'), __dir__)].freeze
@@ -72,5 +104,23 @@ module SndbxTestHelper
 
   def write_dockerfile(name, content)
     File.write(File.join(mkdir("images/#{name}"), 'Dockerfile'), content)
+  end
+
+  def write_images_settings
+    write_settings(images: [{ name: 'claude', user: 'ubuntu' }, { name: 'codex', user: 'ubuntu' }])
+  end
+
+  # The fake docker's calls, logged to @docker_log
+  def docker_calls
+    File.readlines(@docker_log).map { |line| JSON.parse(line) }
+  end
+
+  # The options sndbx's help lists for the command
+  def help_options(*command)
+    sndbx(*command, '-h').out.lines
+                         .map(&:strip)
+                         .select { |line| line.start_with?('-') }
+                         .flat_map { |line| line.split(/\s{2,}/).first.scan(/-[-\w]+/) }
+                         .sort
   end
 end

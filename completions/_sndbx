@@ -102,6 +102,19 @@ _sndbx_add_workdir() {
   fi
 }
 
+# Sets the caller's option to v, w or p when $1 is -v, --volume, -w, --workdir, -p or --publish, short ones also
+# grouped after -k and -h like -kv, and its value to the value attached to it, like ../api in -v../api
+_sndbx_run_option() {
+  option=""
+  value=""
+  if [[ "$1" =~ ^--(volume|workdir|publish)$ ]]; then
+    option="${BASH_REMATCH[1]:0:1}"
+  elif [[ "$1" =~ ^-[kh]*([vwp])(.*)$ ]]; then
+    option="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+  fi
+}
+
 # Completes the options and their values, then the image
 _sndbx_run() {
   local has_image=0 has_workspace=0 i option value
@@ -109,35 +122,38 @@ _sndbx_run() {
 
   # Look for an image and volumes before the current word, skipping option values
   for (( i = 2; i < COMP_CWORD; i++ )); do
-    case "${COMP_WORDS[i]}" in
-      -v|--volume|-w|--workdir|-p|--publish)
-        option="${COMP_WORDS[i]}"
-        (( i++ ))
-        [[ "${COMP_WORDS[i]}" == "=" ]] && (( i++ ))
-        value="${COMP_WORDS[i]}"
-        # Rejoin SRC:DST:OPTS and HOST:CONTAINER, which bash splits at each colon unless they're quoted
-        while (( i + 2 < COMP_CWORD )) && [[ "${COMP_WORDS[i+1]}" == ":" ]]; do
-          value+=":${COMP_WORDS[i+2]}"
-          (( i += 2 ))
-        done
-        [[ "${option}" == -v || "${option}" == --volume ]] && _sndbx_add_workdir "${value}"
-        ;;
-      -*) ;;
-      *) has_image=1 ;;
-    esac
+    _sndbx_run_option "${COMP_WORDS[i]}"
+    if [[ -z "${option}" ]]; then
+      [[ "${COMP_WORDS[i]}" == -* ]] || has_image=1
+      continue
+    fi
+    if [[ -z "${value}" ]]; then
+      (( i++ ))
+      [[ "${COMP_WORDS[i]}" == "=" ]] && (( i++ ))
+      value="${COMP_WORDS[i]}"
+    fi
+    # Rejoin SRC:DST:OPTS and HOST:CONTAINER, which bash splits at each colon unless they're quoted
+    while (( i + 2 < COMP_CWORD )) && [[ "${COMP_WORDS[i+1]}" == ":" ]]; do
+      value+=":${COMP_WORDS[i+2]}"
+      (( i += 2 ))
+    done
+    [[ "${option}" == v ]] && _sndbx_add_workdir "${value}"
   done
 
-  case "${prev}" in
-    -v|--volume)
+  # The current word is the option's value unless prev has one attached
+  _sndbx_run_option "${prev}"
+  [[ -n "${value}" ]] && option=""
+  case "${option}" in
+    v)
       compopt -o filenames
       mapfile -t COMPREPLY < <(compgen -d -- "${cur}")
       ;;
-    -w|--workdir)
+    w)
       # The current directory is mounted unless a volume is in the workspace
       (( has_workspace )) || workdirs+=("${PWD##*/}")
       _sndbx_reply "${workdirs[*]}"
       ;;
-    -p|--publish) ;;
+    p) ;;
     *)
       if [[ "${cur}" == -* ]]; then
         _sndbx_reply '-v --volume -w --workdir -p --publish -k --keep -h --help'

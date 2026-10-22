@@ -165,10 +165,6 @@ class SndbxTestCase < Minitest::Test
     YAML.safe_load_file(settings_path)['images'].map { |image| image['name'] }
   end
 
-  def docker_calls
-    File.readlines(@docker_log).map { |line| JSON.parse(line) }
-  end
-
   def docker_runs
     docker_calls.select { |call| call.first == 'run' }
   end

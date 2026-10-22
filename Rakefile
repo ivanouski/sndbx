@@ -22,4 +22,8 @@ task test: :build
 
 RuboCop::RakeTask.new
 
-task default: %i[check rubocop test]
+desc 'Check sndbx, then run every test'
+task check_and_test: %i[check test]
+
+# RuboCop takes about as long as the rest, so it runs alongside
+multitask default: %i[rubocop check_and_test]

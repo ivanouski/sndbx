@@ -207,7 +207,7 @@ For other images, mount the config directory from the [table](#images) and add t
 
 ```sh
 bundle install                             # once
-bundle exec rake                           # rustfmt, clippy, unit tests, rubocop, then every test
+bundle exec rake                           # rustfmt, clippy, unit tests, then every test, with rubocop alongside
 bundle exec ruby test/completion_test.rb   # one file, against the last build
 ```
 

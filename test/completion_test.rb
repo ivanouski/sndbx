@@ -312,6 +312,22 @@ class CompletionTest < Minitest::Test
     assert_equal %w[api], complete('run', '-v', api, '-v', File.join(@root, 'missing'), '-w', '')
   end
 
+  def test_workdir_completes_grouped_and_attached_volumes
+    api = mkdir('work/api')
+    mkdir('work/web')
+    mkdir('work/sdk')
+
+    assert_equal %w[api sdk web], complete('run', '-kv', api, '-v../web', '-v', '=', '../sdk', '-w', '')
+    assert_equal %w[project], complete('run', 'claude', '-kw', '')
+  end
+
+  def test_grouped_volume_completes_directories
+    mkdir('work/project/src')
+    File.write(File.join(@work, 'README.md'), '')
+
+    assert_equal %w[src], complete('run', '-kv', '')
+  end
+
   def test_workdir_with_equals_sign
     api = mkdir('work/api')
 
@@ -331,23 +347,7 @@ class CompletionTest < Minitest::Test
     out.lines(chomp: true).sort
   end
 
-  def help_options(*command)
-    sndbx(*command, '-h').out.lines
-                         .map(&:strip)
-                         .select { |line| line.start_with?('-') }
-                         .flat_map { |line| line.split(/\s{2,}/).first.scan(/-[-\w]+/) }
-                         .sort
-  end
-
   def write_docker_completions(output)
     File.write(@docker_completions, output)
-  end
-
-  def docker_calls
-    File.readlines(@docker_log).map { |line| JSON.parse(line) }
-  end
-
-  def write_images_settings
-    write_settings(images: [{ name: 'claude', user: 'ubuntu' }, { name: 'codex', user: 'ubuntu' }])
   end
 end
