@@ -7,7 +7,7 @@ A lightweight sandbox for coding agents: one small binary that runs an agent's d
 - **Any image:** an entry in the settings is a name and a tag; sndbx mounts the workspace and the config directory and passes your `docker_args` through.
 - **Optional egress control:** a squid proxy limits sandboxes to the hosts you list, or lets every host through so you can watch what they reach.
 
-As a bonus, the repo comes with Dockerfiles for Claude Code, opencode, Codex and dsh that `sndbx build` builds, see [Images](#images).
+As a bonus, the repo comes with Dockerfiles for Claude Code, opencode, Codex, Cursor and dsh that `sndbx build` builds, see [Images](#images).
 
 ## Install
 
@@ -66,6 +66,8 @@ To limit where sandboxes can connect, set `proxy` and list the allowed hosts in 
 .anthropic.com
 .claude.ai
 .claude.com
+.cursor.com
+.cursor.sh
 
 # code and packages
 .github.com
@@ -162,6 +164,7 @@ proxy: false
 | `claude`   | `/home/ubuntu/.claude`          |                                           |
 | `opencode` | `/home/ubuntu/.config/opencode` | can use Ollama on the host, see below     |
 | `codex`    | `/home/ubuntu/.codex`           | runs without its own sandbox, see below   |
+| `cursor`   | `/home/ubuntu/.cursor`          | runs without its own sandbox, see below   |
 | `dsh`      | `/home/ubuntu/.dsh`             | web UI on port 3080, publish on 127.0.0.1 |
 
 `sndbx build` builds them from `images/`, all on `sndbx:base` (`images/base/`): Ubuntu with node, python, ruby, rust, uv and postgres via mise, and Playwright with headless Chromium.
@@ -169,6 +172,8 @@ proxy: false
 **opencode** keeps its config in `~/.config/opencode`, so its settings entry needs `config_target: .config/opencode`, which `build` adds from `images/opencode/sndbx.yml`; with the default it would get its config mounted at `~/.opencode`, where it doesn't look. `images/opencode/opencode/opencode.json` is an example config for Ollama on the host; copy it into opencode's config directory. The container reaches the host with `--add-host=host.docker.internal:host-gateway`, and on Linux Ollama must listen beyond loopback, e.g. `OLLAMA_HOST=0.0.0.0 ollama serve`.
 
 **codex** sandboxes its commands with bubblewrap, which needs user namespaces that docker's default seccomp profile blocks, so the image starts it with `--sandbox danger-full-access` and the container is the sandbox.
+
+**cursor** keeps its login in `~/.config/cursor` and everything else in `~/.cursor`, so the image links the first to the second and the one config directory keeps both. Like codex, it starts with its own sandbox off, `--sandbox disabled`.
 
 **dsh** refuses to listen on a wildcard address, so the image binds the container's own address, which a published port reaches. `images/dsh/sndbx.yml` publishes it on `127.0.0.1` only, keep it that way: a plain `-p 3080:3080` lets anyone on your network control the agent.
 
