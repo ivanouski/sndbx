@@ -30,7 +30,10 @@ pub fn load() -> Result<Vec<String>> {
 fn parse(content: &str, path: &Path) -> Result<Vec<String>> {
     let mut hosts: Vec<String> = Vec::new();
     for (index, line) in content.lines().enumerate() {
-        let host = line.split_once('#').map_or(line, |(host, _comment)| host).trim();
+        let host = line
+            .split_once('#')
+            .map_or(line, |(host, _comment)| host)
+            .trim();
         if host.is_empty() {
             continue;
         }
@@ -58,14 +61,17 @@ fn covers(domain: &str, host: &str) -> bool {
 
 /// Strict, so nothing else reaches the proxy's config
 fn is_valid_host(host: &str) -> bool {
-    host.strip_prefix('.').unwrap_or(host).split('.').all(|label| {
-        !label.is_empty()
-            && !label.starts_with('-')
-            && !label.ends_with('-')
-            && label
-                .bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-    })
+    host.strip_prefix('.')
+        .unwrap_or(host)
+        .split('.')
+        .all(|label| {
+            !label.is_empty()
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
 }
 
 #[cfg(test)]
@@ -75,13 +81,17 @@ mod tests {
     #[test]
     fn hosts() {
         let content = "# models\n.openai.com\n\n  pypi.org  # packages\n.openai.com\n";
-        assert_eq!(parse(content, Path::new("x")).unwrap(), [".openai.com", "pypi.org"]);
+        assert_eq!(
+            parse(content, Path::new("x")).unwrap(),
+            [".openai.com", "pypi.org"]
+        );
         assert_eq!(parse("", Path::new("x")).unwrap(), Vec::<String>::new());
     }
 
     #[test]
     fn drops_hosts_a_domain_covers() {
-        let content = "api.github.com\n.x.github.com\ngithub.com\n.github.com\nmygithub.com\npypi.org\n";
+        let content =
+            "api.github.com\n.x.github.com\ngithub.com\n.github.com\nmygithub.com\npypi.org\n";
         assert_eq!(
             parse(content, Path::new("x")).unwrap(),
             [".github.com", "mygithub.com", "pypi.org"]
@@ -90,7 +100,10 @@ mod tests {
 
     #[test]
     fn invalid_hosts() {
-        let message = parse("a.com\nopen ai.com\n", Path::new("x")).err().unwrap().to_string();
+        let message = parse("a.com\nopen ai.com\n", Path::new("x"))
+            .err()
+            .unwrap()
+            .to_string();
         assert_eq!(
             message,
             "invalid x line 2: 'open ai.com' is not a host name like .openai.com or pypi.org"

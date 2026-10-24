@@ -35,7 +35,10 @@ impl NewEntry {
         // The keys must parse the same indented under the name, which flow style or a second document wouldn't
         let parsed: Option<Vec<Entry>> = serde_norway::from_str(&new.item(0)).ok();
         if parsed.as_deref() != Some(std::slice::from_ref(&new.entry)) {
-            bail!("invalid {}: write each key at the start of a line", path.display());
+            bail!(
+                "invalid {}: write each key at the start of a line",
+                path.display()
+            );
         }
         Ok(new)
     }
@@ -52,7 +55,10 @@ impl NewEntry {
     pub fn item(&self, indent: usize) -> String {
         let indent = " ".repeat(indent);
         // Unquoted, `true` or `123` would be a bool or a number
-        let mut item = format!("{indent}- name: '{}'\n", self.entry.name.replace('\'', "''"));
+        let mut item = format!(
+            "{indent}- name: '{}'\n",
+            self.entry.name.replace('\'', "''")
+        );
         for line in self.keys.lines() {
             if !line.trim().is_empty() {
                 item.push_str(&indent);
@@ -97,8 +103,12 @@ pub fn add_image(new: &NewEntry) -> Result<Added> {
     };
 
     let addition = match added {
-        Added::Appended => addition(&settings.file, &content, new)
-            .ok_or_else(|| anyhow!("can't tell where the images list in {} ends", path.display()))?,
+        Added::Appended => addition(&settings.file, &content, new).ok_or_else(|| {
+            anyhow!(
+                "can't tell where the images list in {} ends",
+                path.display()
+            )
+        })?,
         _ => String::new(),
     };
     if !exists {
@@ -120,7 +130,10 @@ pub fn add_image(new: &NewEntry) -> Result<Added> {
 /// none, or under a new `images` key. `None` when none works, like for a flow list or a second document.
 fn addition(file: &File, content: &str, new: &NewEntry) -> Option<String> {
     let mut expected = file.clone();
-    expected.images.get_or_insert_default().push(new.entry.clone());
+    expected
+        .images
+        .get_or_insert_default()
+        .push(new.entry.clone());
 
     let newline = if content.is_empty() || content.ends_with('\n') {
         ""
@@ -137,7 +150,9 @@ fn addition(file: &File, content: &str, new: &NewEntry) -> Option<String> {
     candidates
         .into_iter()
         .map(|candidate| format!("{newline}{candidate}"))
-        .find(|addition| parse(&format!("{content}{addition}")).is_ok_and(|parsed| parsed == expected))
+        .find(|addition| {
+            parse(&format!("{content}{addition}")).is_ok_and(|parsed| parsed == expected)
+        })
 }
 
 /// False when there's no settings file or no entry
@@ -148,11 +163,18 @@ pub fn comment_out_image(name: &str) -> Result<bool> {
     }
     let content = paths::read_file(&path)?;
     let settings = validate(&content, &path)?;
-    let Some(index) = settings.images().iter().position(|entry| entry.name == name) else {
+    let Some(index) = settings
+        .images()
+        .iter()
+        .position(|entry| entry.name == name)
+    else {
         return Ok(false);
     };
 
-    let marker = format!("# Removed by sndbx rm on {}:", jiff::Zoned::now().strftime("%F"));
+    let marker = format!(
+        "# Removed by sndbx rm on {}:",
+        jiff::Zoned::now().strftime("%F")
+    );
     let Some(commented) = commented_out(&settings.file, &content, index, &marker) else {
         bail!("can't tell where its entry in {} is", path.display());
     };
@@ -170,7 +192,9 @@ fn commented_out(file: &File, content: &str, index: usize, marker: &str) -> Opti
     let lines: Vec<&str> = content.split_inclusive('\n').collect();
     list_items(&lines)
         .map(|item| comment_out(&lines, &item, marker))
-        .find(|commented| parse(commented).is_ok_and(|parsed| without_empty_images(parsed) == expected))
+        .find(|commented| {
+            parse(commented).is_ok_and(|parsed| without_empty_images(parsed) == expected)
+        })
 }
 
 struct ListItem {
@@ -254,8 +278,12 @@ mod tests {
     }
 
     fn added_with(content: &str, name: &str, keys: &str) -> Option<String> {
-        addition(&parse(content).unwrap(), content, &new_entry(name, keys).unwrap())
-            .map(|addition| format!("{content}{addition}"))
+        addition(
+            &parse(content).unwrap(),
+            content,
+            &new_entry(name, keys).unwrap(),
+        )
+        .map(|addition| format!("{content}{addition}"))
     }
 
     fn added(content: &str, name: &str) -> Option<String> {
@@ -299,7 +327,11 @@ mod tests {
             );
         }
         assert!(!new_entry("b", "").unwrap().has_config_target());
-        assert!(new_entry("b", "config_target: .config/b").unwrap().has_config_target());
+        assert!(
+            new_entry("b", "config_target: .config/b")
+                .unwrap()
+                .has_config_target()
+        );
     }
 
     #[test]
@@ -317,12 +349,19 @@ mod tests {
             "tag_prefix: x\nimages:\n  - name: 'b'\n"
         );
         assert_eq!(
-            added("images:\n    - name: a\n      docker_args:\n        - x\n", "b").unwrap(),
+            added(
+                "images:\n    - name: a\n      docker_args:\n        - x\n",
+                "b"
+            )
+            .unwrap(),
             "images:\n    - name: a\n      docker_args:\n        - x\n    - name: 'b'\n"
         );
         assert_eq!(added("", "b").unwrap(), "images:\n  - name: 'b'\n");
         assert_eq!(added("images: []\n# a\n", "b"), None);
-        assert_eq!(added("images:\n  - name: a\ndocker_args:\n  - x\n", "b"), None);
+        assert_eq!(
+            added("images:\n  - name: a\ndocker_args:\n  - x\n", "b"),
+            None
+        );
         assert_eq!(added("images: ~\n", "b"), None);
         assert_eq!(added("images:\n  - name: a\n---\nx: 1\n", "b"), None);
     }
@@ -352,15 +391,18 @@ mod tests {
             "images:\n  # Removed:\n  # - name: a\n  #   ports: ['1']\n  - name: b\n"
         );
         assert_eq!(
-            commented("images:\n- name: a\n- user: x\n  name: b\ndocker_args: [y]\n", 1).unwrap(),
+            commented(
+                "images:\n- name: a\n- user: x\n  name: b\ndocker_args: [y]\n",
+                1
+            )
+            .unwrap(),
             "images:\n- name: a\n# Removed:\n# - user: x\n#   name: b\ndocker_args: [y]\n"
         );
     }
 
     #[test]
     fn comments_out_an_entry_with_a_list() {
-        let content =
-            "images:\n  - name: a\n    docker_args:\n      - x\n\n    # mine\n    ports: ['1']\n  - name: b\n";
+        let content = "images:\n  - name: a\n    docker_args:\n      - x\n\n    # mine\n    ports: ['1']\n  - name: b\n";
         assert_eq!(
             commented(content, 0).unwrap(),
             "images:\n  # Removed:\n  # - name: a\n  #   docker_args:\n  #     - x\n\n    # mine\n  #   ports: ['1']\n  - name: b\n"
@@ -386,6 +428,9 @@ mod tests {
     #[test]
     fn comments_out_only_whole_entries() {
         assert_eq!(commented("images: [{name: a}]\n", 0), None);
-        assert_eq!(commented("docker_args:\n  - x\nimages: [{name: a}]\n", 0), None);
+        assert_eq!(
+            commented("docker_args:\n  - x\nimages: [{name: a}]\n", 0),
+            None
+        );
     }
 }

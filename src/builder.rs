@@ -46,7 +46,10 @@ impl Builder {
                 bail!("{BASE_NAME} is built with --rebuild-base");
             }
             if !known.contains(name) {
-                bail!("unknown image '{name}', expected one of: {}", known.join(", "));
+                bail!(
+                    "unknown image '{name}', expected one of: {}",
+                    known.join(", ")
+                );
             }
         }
         let images = unique(names.iter().map(String::as_str));
@@ -144,7 +147,8 @@ impl Builder {
 
     fn needs_base(&self, name: &str) -> Result<bool> {
         let path = self.dockerfile(name);
-        let dockerfile = std::fs::read(&path).with_context(|| format!("can't read {}", path.display()))?;
+        let dockerfile =
+            std::fs::read(&path).with_context(|| format!("can't read {}", path.display()))?;
         Ok(is_from_base(&String::from_utf8_lossy(&dockerfile)))
     }
 
@@ -184,8 +188,12 @@ impl Builder {
                 path.display(),
                 self.tag_for(name)
             )),
-            Ok(Added::Appended) => print_status(&format!("Added {name} to {}{hint}", path.display())),
-            Ok(Added::Created) => print_status(&format!("Created {} with {name}{hint}", path.display())),
+            Ok(Added::Appended) => {
+                print_status(&format!("Added {name} to {}{hint}", path.display()));
+            }
+            Ok(Added::Created) => {
+                print_status(&format!("Created {} with {name}{hint}", path.display()));
+            }
             Err(e) => eprint!(
                 "Warning: can't add {name} to the settings: {e:#}.\nAdd it to the images in {}:\n{}",
                 path.display(),
@@ -238,7 +246,9 @@ fn is_from_base(dockerfile: &str) -> bool {
     dockerfile.lines().any(|line| {
         let mut words = line.split_ascii_whitespace();
         // Not indented, and FROM is a word of its own
-        line.starts_with("FROM") && words.next() == Some("FROM") && words.next() == Some(image.as_str())
+        line.starts_with("FROM")
+            && words.next() == Some("FROM")
+            && words.next() == Some(image.as_str())
     })
 }
 
@@ -248,7 +258,9 @@ mod tests {
 
     #[test]
     fn finds_the_base_image() {
-        assert!(is_from_base("ARG TAG_PREFIX=sndbx\nFROM ${TAG_PREFIX}:base\n"));
+        assert!(is_from_base(
+            "ARG TAG_PREFIX=sndbx\nFROM ${TAG_PREFIX}:base\n"
+        ));
         assert!(is_from_base("FROM\t${TAG_PREFIX}:base AS build\r\n"));
         assert!(is_from_base("FROM ${TAG_PREFIX}:base"));
         assert!(is_from_base("FROM  ${TAG_PREFIX}:base  "));

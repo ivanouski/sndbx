@@ -32,12 +32,16 @@ pub fn text<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Err
     Text::deserialize(deserializer).map(|Text(text)| text)
 }
 
-pub fn optional_text<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+pub fn optional_text<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
     Ok(Option::<Text>::deserialize(deserializer)?.map(|Text(text)| text))
 }
 
 /// The default for null
-pub fn or_default<'de, D: Deserializer<'de>, T: Deserialize<'de> + Default>(deserializer: D) -> Result<T, D::Error> {
+pub fn or_default<'de, D: Deserializer<'de>, T: Deserialize<'de> + Default>(
+    deserializer: D,
+) -> Result<T, D::Error> {
     Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
 }
 

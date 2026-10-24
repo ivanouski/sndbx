@@ -119,7 +119,10 @@ impl Sandbox {
 
     fn volume_specs(&self, config_target: &str) -> Vec<String> {
         let mut specs: Vec<String> = self.volumes.iter().map(Volume::spec).collect();
-        specs.push(format!("{}:{config_target}", self.image.config_dir.display()));
+        specs.push(format!(
+            "{}:{config_target}",
+            self.image.config_dir.display()
+        ));
         specs
     }
 
@@ -222,7 +225,10 @@ fn volumes(specs: &[String]) -> Result<Vec<Volume>> {
     }
 
     let mut targets = HashSet::new();
-    if let Some(volume) = volumes.iter().find(|volume| !targets.insert(&volume.target)) {
+    if let Some(volume) = volumes
+        .iter()
+        .find(|volume| !targets.insert(&volume.target))
+    {
         bail!("more than one volume is mounted at {}", volume.target);
     }
 
@@ -276,7 +282,9 @@ fn workdir_target(name: &str) -> String {
 }
 
 fn workdir_name(target: &str) -> &str {
-    target.strip_prefix(&format!("{MOUNT_ROOT}/")).unwrap_or(target)
+    target
+        .strip_prefix(&format!("{MOUNT_ROOT}/"))
+        .unwrap_or(target)
 }
 
 fn is_in_workspace(target: &str) -> bool {
@@ -403,7 +411,10 @@ mod tests {
         let proxy_args = proxy::run_args();
         let start = args.iter().position(|arg| *arg == proxy_args[0]).unwrap();
         assert_eq!(args[start..start + proxy_args.len()], proxy_args);
-        assert_eq!(args[start + proxy_args.len()..], ["--env=FOO=bar", "sndbx-dev"]);
+        assert_eq!(
+            args[start + proxy_args.len()..],
+            ["--env=FOO=bar", "sndbx-dev"]
+        );
     }
 
     #[test]
@@ -411,7 +422,10 @@ mod tests {
         assert_eq!(normalize_port("3000").unwrap(), "3000:3000");
         assert_eq!(normalize_port("53/udp").unwrap(), "53:53/udp");
         assert_eq!(normalize_port("8080:80").unwrap(), "8080:80");
-        assert_eq!(normalize_port("127.0.0.1:3080:3080").unwrap(), "127.0.0.1:3080:3080");
+        assert_eq!(
+            normalize_port("127.0.0.1:3080:3080").unwrap(),
+            "127.0.0.1:3080:3080"
+        );
         assert!(normalize_port("http").is_err());
         // Docker checks the range
         assert_eq!(normalize_port("8080:70000").unwrap(), "8080:70000");

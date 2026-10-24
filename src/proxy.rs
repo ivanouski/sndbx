@@ -94,7 +94,8 @@ fn write_config(content: &str) -> Result<Config> {
     let path = config_path();
     // Docker leaves a directory at a bind mount's path if the file was gone when the container restarted
     if path.is_dir() {
-        std::fs::remove_dir(&path).with_context(|| format!("can't remove the directory {}", path.display()))?;
+        std::fs::remove_dir(&path)
+            .with_context(|| format!("can't remove the directory {}", path.display()))?;
     }
     let current = std::fs::read_to_string(&path).ok();
     if current.as_deref() != Some(content) {
@@ -103,7 +104,11 @@ fn write_config(content: &str) -> Result<Config> {
     }
     Ok(if current.is_none() {
         Config::Created
-    } else if std::fs::read_to_string(loaded_config_path()).ok().as_deref() == Some(content) {
+    } else if std::fs::read_to_string(loaded_config_path())
+        .ok()
+        .as_deref()
+        == Some(content)
+    {
         Config::Loaded
     } else {
         Config::Changed
@@ -126,7 +131,12 @@ fn create_network() -> Result<()> {
 /// Keeps a running proxy and reloads its config, or replaces it
 fn start(image: &str, config: &Config) -> Result<ContainerState> {
     match container_state(CONTAINER) {
-        Some(state) if state.up && state.image == image && mounts_config(&state) && *config != Config::Created => {
+        Some(state)
+            if state.up
+                && state.image == image
+                && mounts_config(&state)
+                && *config != Config::Created =>
+        {
             reload(config)?;
             Ok(state)
         }
@@ -155,13 +165,24 @@ fn replace(exists: bool, image: &str) -> Result<ContainerState> {
     }
     let volume = format!("{}:{CONFIG_TARGET}:ro", config_path().display());
     // Before removing the old proxy, so it keeps running if squid rejects the config
-    check_config(&["run", "--rm", "--entrypoint=squid", "-v", &volume, image, "-k", "parse"])?;
+    check_config(&[
+        "run",
+        "--rm",
+        "--entrypoint=squid",
+        "-v",
+        &volume,
+        image,
+        "-k",
+        "parse",
+    ])?;
     // -v removes the log and cache volumes, which would pile up
     if exists && !docker::run_muted(&["rm", "-f", "-v", CONTAINER]) {
         bail!("can't remove the proxy {CONTAINER} to replace it");
     }
     let restart = "--restart=unless-stopped";
-    if !docker::run_muted(&["run", "-d", "--name", CONTAINER, restart, "-v", &volume, image]) {
+    if !docker::run_muted(&[
+        "run", "-d", "--name", CONTAINER, restart, "-v", &volume, image,
+    ]) {
         bail!(start_error());
     }
     Ok(ContainerState {
@@ -202,7 +223,10 @@ fn check_config(args: &[&str]) -> Result<()> {
     } else {
         eprintln!("{}", errors.join("\n"));
     }
-    bail!("squid can't use the proxy's config {}", config_path().display());
+    bail!(
+        "squid can't use the proxy's config {}",
+        config_path().display()
+    );
 }
 
 pub fn follow_log(lines: u64, denied: bool) -> Result<()> {
@@ -211,7 +235,15 @@ pub fn follow_log(lines: u64, denied: bool) -> Result<()> {
     }
     let lines = lines.to_string();
     let command: &[&str] = if denied {
-        &["sh", "-c", FOLLOW_MATCHING, "sh", &lines, ACCESS_LOG, DENIED]
+        &[
+            "sh",
+            "-c",
+            FOLLOW_MATCHING,
+            "sh",
+            &lines,
+            ACCESS_LOG,
+            DENIED,
+        ]
     } else {
         // -F survives log rotation
         &["tail", "-n", &lines, "-F", ACCESS_LOG]
@@ -262,7 +294,10 @@ mod tests {
     #[test]
     fn configs() {
         assert_eq!(
-            config(&Hosts::Listed(vec![".openai.com".to_string(), "pypi.org".to_string()])),
+            config(&Hosts::Listed(vec![
+                ".openai.com".to_string(),
+                "pypi.org".to_string()
+            ])),
             "http_port 3128\n\
              acl SSL_ports port 443\n\
              acl Safe_ports port 80 443\n\
@@ -310,7 +345,8 @@ mod tests {
         use std::process::{Command, Stdio};
         use std::sync::mpsc;
 
-        let log = std::env::temp_dir().join(format!("sndbx-follow-matching-{}.log", std::process::id()));
+        let log =
+            std::env::temp_dir().join(format!("sndbx-follow-matching-{}.log", std::process::id()));
         std::fs::write(
             &log,
             "1 TCP_DENIED/403\n2 TCP_TUNNEL/200\n3 TCP_DENIED/403\n4 TCP_DENIED/403\n",
@@ -318,7 +354,14 @@ mod tests {
         .unwrap();
         // In its own process group, so killing that stops tail and grep too
         let mut child = Command::new("sh")
-            .args(["-c", FOLLOW_MATCHING, "sh", "2", log.to_str().unwrap(), DENIED])
+            .args([
+                "-c",
+                FOLLOW_MATCHING,
+                "sh",
+                "2",
+                log.to_str().unwrap(),
+                DENIED,
+            ])
             .stdout(Stdio::piped())
             .process_group(0)
             .spawn()
@@ -332,11 +375,16 @@ mod tests {
                 }
             }
         });
-        let next = || receiver.recv_timeout(Duration::from_secs(5)).unwrap_or_default();
+        let next = || {
+            receiver
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap_or_default()
+        };
 
         let earlier = [next(), next()];
         let mut file = std::fs::OpenOptions::new().append(true).open(&log).unwrap();
-        file.write_all(b"5 TCP_TUNNEL/200\n6 TCP_DENIED/403\n").unwrap();
+        file.write_all(b"5 TCP_TUNNEL/200\n6 TCP_DENIED/403\n")
+            .unwrap();
         let later = next();
 
         // A negative PID is the process group, which procps' kill takes only after a signal and --

@@ -30,12 +30,14 @@ pub fn image_exists(tag: &str) -> bool {
 
 /// Empty for root, `None` if the image doesn't exist
 pub fn image_user(tag: &str) -> Option<String> {
-    output(&["image", "inspect", "--format", "{{.Config.User}}", tag]).map(|user| user.trim().to_string())
+    output(&["image", "inspect", "--format", "{{.Config.User}}", tag])
+        .map(|user| user.trim().to_string())
 }
 
 /// `None` if the network doesn't exist
 pub fn network_internal(name: &str) -> Option<bool> {
-    output(&["network", "inspect", "--format", "{{.Internal}}", name]).map(|internal| internal.trim() == "true")
+    output(&["network", "inspect", "--format", "{{.Internal}}", name])
+        .map(|internal| internal.trim() == "true")
 }
 
 pub struct ContainerState {
@@ -56,17 +58,30 @@ const CONTAINER_STATE_FORMAT: &str = "{{.State.Running}}\n{{.State.Restarting}}\
 
 /// `None` if the container doesn't exist
 pub fn container_state(name: &str) -> Option<ContainerState> {
-    let state = output(&["container", "inspect", "--format", CONTAINER_STATE_FORMAT, name])?;
+    let state = output(&[
+        "container",
+        "inspect",
+        "--format",
+        CONTAINER_STATE_FORMAT,
+        name,
+    ])?;
     let mut lines = state.lines();
     let running = lines.next() == Some("true");
     let restarting = lines.next() == Some("true");
     let image = lines.next()?.to_string();
-    let networks = lines.next()?.split_whitespace().map(ToString::to_string).collect();
+    let networks = lines
+        .next()?
+        .split_whitespace()
+        .map(ToString::to_string)
+        .collect();
     Some(ContainerState {
         up: running && !restarting,
         image,
         networks,
-        mounts: lines.filter(|line| !line.is_empty()).map(ToString::to_string).collect(),
+        mounts: lines
+            .filter(|line| !line.is_empty())
+            .map(ToString::to_string)
+            .collect(),
     })
 }
 
@@ -75,7 +90,13 @@ pub fn running_containers(image: &str) -> Result<Vec<String>> {
 }
 
 pub fn stopped_containers(image: &str) -> Result<Vec<String>> {
-    containers(&["--all", "--filter", "status=exited", "--filter", &label_filter(image)])
+    containers(&[
+        "--all",
+        "--filter",
+        "status=exited",
+        "--filter",
+        &label_filter(image),
+    ])
 }
 
 /// Any containers using the image, which keep docker from removing it
@@ -172,8 +193,14 @@ fn prepare<S: AsRef<str>>(args: &[S]) {
 /// Only warns when the log can't be written
 fn log_command<S: AsRef<str>>(args: &[S]) {
     let path = log_path();
-    let command: Vec<&str> = std::iter::once(DOCKER).chain(args.iter().map(AsRef::as_ref)).collect();
-    let line = format!("{} {}\n", jiff::Zoned::now().strftime("%FT%T%:z"), shell_join(&command));
+    let command: Vec<&str> = std::iter::once(DOCKER)
+        .chain(args.iter().map(AsRef::as_ref))
+        .collect();
+    let line = format!(
+        "{} {}\n",
+        jiff::Zoned::now().strftime("%FT%T%:z"),
+        shell_join(&command)
+    );
 
     let written = paths::create_parent_dir(&path)
         .and_then(|()| OpenOptions::new().create(true).append(true).open(&path))

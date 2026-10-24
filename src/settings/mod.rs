@@ -43,7 +43,11 @@ pub struct Image {
 
 /// The settings file as written
 #[derive(Deserialize, Default, Clone, PartialEq, Debug)]
-#[serde(default, deny_unknown_fields, expecting = "a mapping with an images list")]
+#[serde(
+    default,
+    deny_unknown_fields,
+    expecting = "a mapping with an images list"
+)]
 struct File {
     #[serde(deserialize_with = "optional_text")]
     tag_prefix: Option<String>,
@@ -140,7 +144,10 @@ impl Settings {
             ),
             Some(dir) => dir,
         };
-        let config_target = entry.config_target.clone().unwrap_or_else(|| format!(".{name}"));
+        let config_target = entry
+            .config_target
+            .clone()
+            .unwrap_or_else(|| format!(".{name}"));
 
         Ok(Image {
             name: name.to_string(),
@@ -162,7 +169,10 @@ impl Settings {
     }
 
     fn entry_tag(&self, entry: &Entry) -> String {
-        entry.tag.clone().unwrap_or_else(|| self.default_tag(&entry.name))
+        entry
+            .tag
+            .clone()
+            .unwrap_or_else(|| self.default_tag(&entry.name))
     }
 
     pub fn default_tag(&self, name: &str) -> String {
@@ -187,11 +197,17 @@ impl Settings {
     }
 
     pub fn image_names(&self) -> Vec<String> {
-        self.images().iter().map(|entry| entry.name.clone()).collect()
+        self.images()
+            .iter()
+            .map(|entry| entry.name.clone())
+            .collect()
     }
 
     pub fn tag_prefix(&self) -> &str {
-        self.file.tag_prefix.as_deref().unwrap_or(DEFAULT_TAG_PREFIX)
+        self.file
+            .tag_prefix
+            .as_deref()
+            .unwrap_or(DEFAULT_TAG_PREFIX)
     }
 
     pub fn images_dir(&self) -> PathBuf {
@@ -236,7 +252,11 @@ fn validate(content: &str, path: &Path) -> Result<Settings> {
         );
     }
 
-    if file.proxy.as_ref().is_some_and(|proxy| !is_valid_image(&proxy.image)) {
+    if file
+        .proxy
+        .as_ref()
+        .is_some_and(|proxy| !is_valid_image(&proxy.image))
+    {
         bail!(
             "invalid {}: proxy.image must be an image like ubuntu/squid",
             path.display()
@@ -270,9 +290,12 @@ fn is_valid_image(image: &str) -> bool {
 
 /// Lowercase alphanumeric words joined by single `.`, `_`, `-` or `/`, like `sndbx` or `my.org/sndbx`
 fn is_valid_tag_prefix(prefix: &str) -> bool {
-    prefix
-        .split(['.', '_', '-', '/'])
-        .all(|word| !word.is_empty() && word.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit()))
+    prefix.split(['.', '_', '-', '/']).all(|word| {
+        !word.is_empty()
+            && word
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+    })
 }
 
 #[cfg(test)]
@@ -308,7 +331,10 @@ mod tests {
 
     #[test]
     fn only_the_first_document() {
-        assert_eq!(parse("images: []\n---\nimages: 1\n").unwrap().images, Some(vec![]));
+        assert_eq!(
+            parse("images: []\n---\nimages: 1\n").unwrap().images,
+            Some(vec![])
+        );
     }
 
     #[test]
@@ -341,7 +367,9 @@ mod tests {
             })
         );
         assert_eq!(
-            proxy("proxy:\n  image: squid\n  allow: all\n").unwrap().allow,
+            proxy("proxy:\n  image: squid\n  allow: all\n")
+                .unwrap()
+                .allow,
             Allow::All
         );
         assert_eq!(
@@ -357,7 +385,10 @@ mod tests {
             "{message}"
         );
         let message = parse("proxy:\n  allow: all\n").err().unwrap().to_string();
-        assert!(message.contains("proxy: missing field `image`"), "{message}");
+        assert!(
+            message.contains("proxy: missing field `image`"),
+            "{message}"
+        );
     }
 
     #[test]
@@ -368,7 +399,10 @@ mod tests {
             .err()
             .unwrap()
             .to_string();
-        assert!(message.contains("images[0]: unknown field `port`"), "{message}");
+        assert!(
+            message.contains("images[0]: unknown field `port`"),
+            "{message}"
+        );
     }
 
     #[test]
@@ -384,7 +418,10 @@ mod tests {
             "proxy:\n  image: 1\n",
         ] {
             let message = parse(invalid).err().unwrap().to_string();
-            assert!(message.contains("expected a string"), "{invalid:?}: {message}");
+            assert!(
+                message.contains("expected a string"),
+                "{invalid:?}: {message}"
+            );
         }
     }
 }

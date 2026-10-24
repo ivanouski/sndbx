@@ -8,7 +8,8 @@ use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::builder::{BASE_NAME, Builder};
 use crate::docker::{
-    self, check_container, check_docker, image_containers, image_exists, running_containers, stopped_containers,
+    self, check_container, check_docker, image_containers, image_exists, running_containers,
+    stopped_containers,
 };
 use crate::proxy::{self, Hosts, Proxy};
 use crate::sandbox::{MOUNT_ROOT, Options, Sandbox};
@@ -134,7 +135,12 @@ struct Run {
     workdir: Option<String>,
 
     /// Publish a port as HOST:CONTAINER, PORT means PORT:PORT, repeatable
-    #[arg(short, long = "publish", value_name = "PORT", allow_hyphen_values = true)]
+    #[arg(
+        short,
+        long = "publish",
+        value_name = "PORT",
+        allow_hyphen_values = true
+    )]
     ports: Vec<String>,
 
     /// Keep the container after it exits, docker run's --rm otherwise removes it
@@ -372,7 +378,9 @@ fn rm(args: &Rm) -> Result<()> {
 /// Fails if the image is unknown, an image not in `names` shares its tag, or containers use it
 fn check_removal<'a>(settings: &Settings, name: &'a str, names: &[&str]) -> Result<Removal<'a>> {
     let configured_tag = settings.configured_tag(name);
-    let tag = configured_tag.clone().unwrap_or_else(|| settings.default_tag(name));
+    let tag = configured_tag
+        .clone()
+        .unwrap_or_else(|| settings.default_tag(name));
     let exists = image_exists(&tag);
     if configured_tag.is_none() && !exists {
         bail!(
@@ -387,7 +395,10 @@ fn check_removal<'a>(settings: &Settings, name: &'a str, names: &[&str]) -> Resu
         .filter(|other| !names.contains(other))
         .collect();
     if !others.is_empty() {
-        bail!("{tag} is also run by {}, rm them together", others.join(", "));
+        bail!(
+            "{tag} is also run by {}, rm them together",
+            others.join(", ")
+        );
     }
     if exists {
         let containers = image_containers(&tag)?;
@@ -440,7 +451,11 @@ fn exec(args: &Exec) -> Result<()> {
     check_sandbox(&args.image, container, "running", running_containers)?;
 
     // Docker refuses -t without a terminal on stdin
-    let tty = if std::io::stdin().is_terminal() { "-it" } else { "-i" };
+    let tty = if std::io::stdin().is_terminal() {
+        "-it"
+    } else {
+        "-i"
+    };
     let user = args.user.as_ref().map(|user| format!("--user={user}"));
 
     let mut docker_args = vec!["exec", tty];
@@ -456,10 +471,19 @@ fn resume(args: &Resume) -> Result<()> {
     docker::exec(&["start", "-ai", container])
 }
 
-fn check_sandbox(image: &str, container: &str, state: &str, containers: fn(&str) -> Result<Vec<String>>) -> Result<()> {
+fn check_sandbox(
+    image: &str,
+    container: &str,
+    state: &str,
+    containers: fn(&str) -> Result<Vec<String>>,
+) -> Result<()> {
     Settings::load()?.image(image)?;
     check_docker()?;
-    check_container(container, &containers(image)?, &format!("{state} {image} sandbox"))
+    check_container(
+        container,
+        &containers(image)?,
+        &format!("{state} {image} sandbox"),
+    )
 }
 
 fn list(args: List) -> Result<()> {

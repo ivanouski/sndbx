@@ -55,7 +55,9 @@ pub fn expand_path(path: impl AsRef<Path>, base: Option<&Path>) -> PathBuf {
     let path = path.as_ref();
     let absolute = match path.strip_prefix("~") {
         Ok(rest) => home().join(rest),
-        Err(_) => base.map_or_else(current_dir, |base| expand_path(base, None)).join(path),
+        Err(_) => base
+            .map_or_else(current_dir, |base| expand_path(base, None))
+            .join(path),
     };
     normalize(&absolute)
 }
@@ -81,7 +83,11 @@ pub fn join(parts: &[&str]) -> String {
         return String::new();
     };
     rest.iter().fold(first.to_string(), |joined, part| {
-        format!("{}/{}", joined.trim_end_matches('/'), part.trim_start_matches('/'))
+        format!(
+            "{}/{}",
+            joined.trim_end_matches('/'),
+            part.trim_start_matches('/')
+        )
     })
 }
 
@@ -138,7 +144,10 @@ mod tests {
 
     #[test]
     fn join_uses_one_slash() {
-        assert_eq!(join(&["/home", "ubuntu", ".claude"]), "/home/ubuntu/.claude");
+        assert_eq!(
+            join(&["/home", "ubuntu", ".claude"]),
+            "/home/ubuntu/.claude"
+        );
         assert_eq!(join(&["/home/", "/ubuntu/", "/x"]), "/home/ubuntu/x");
         assert_eq!(join(&["/workspace", ""]), "/workspace/");
     }
@@ -146,6 +155,9 @@ mod tests {
     #[test]
     fn shell_join_escapes() {
         let words = ["docker", "my dir", "", "a\nb", "x=$y", "/a:b@c,d+e"];
-        assert_eq!(shell_join(&words), "docker my\\ dir '' a'\n'b x\\=\\$y /a:b@c,d+e");
+        assert_eq!(
+            shell_join(&words),
+            "docker my\\ dir '' a'\n'b x\\=\\$y /a:b@c,d+e"
+        );
     }
 }
