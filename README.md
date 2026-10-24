@@ -119,6 +119,7 @@ sndbx logs proxy --denied                             # only the denied ones
 - mounts the current directory at `/workspace/<basename>` unless a volume is mounted in `/workspace`
 - mounts the image's config directory at `/home/<user>/<config_target>`, where `<user>` is the one the image runs as, or `/root/<config_target>` for root
 - publishes the image's `ports` plus each `-p PORT`
+- passes `COLORTERM`, `TERM_PROGRAM` and `TERM_PROGRAM_VERSION` through from the host, so tools in it see the terminal's colors and features
 - passes the top-level `docker_args`, then the image's, then everything after `--` to `docker run`
 - labels the container `sndbx.image=<name>`, which `exec`, `resume` and `list` find it by
 - with `proxy` set, runs it on `sndbx-internal` behind `sndbx-proxy`, unless the image has `proxy: false`, see **Network** above

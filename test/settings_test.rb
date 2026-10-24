@@ -81,7 +81,7 @@ class SettingsTest < SndbxTestCase
     config_dir = File.join(@home, '.config', 'sndbx', 'claude-docker')
     assert File.directory?(config_dir)
     assert_equal [*run_options('project'), *volume('project'), '-v', "#{config_dir}:/home/ubuntu/.claude",
-                  'sndbx:claude'],
+                  *TERMINAL_ENV, 'sndbx:claude'],
                  docker_calls.last
   end
 
@@ -94,7 +94,7 @@ class SettingsTest < SndbxTestCase
     config_dir = File.join(@home, '.claude_docker')
     assert File.directory?(config_dir)
     assert_equal [*run_options('project'), *volume('project'), '-v', "#{config_dir}:/home/ubuntu/.claude",
-                  'sndbx:claude'],
+                  *TERMINAL_ENV, 'sndbx:claude'],
                  docker_calls.last
   end
 

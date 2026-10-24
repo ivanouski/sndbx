@@ -13,7 +13,8 @@ class LogsTest < SndbxTestCase
     sndbx('exec', 'claude', 'gifted_mcnulty', 'bash')
     sndbx('resume', 'claude', 'sleepy_babbage')
 
-    assert_equal [['docker', *run_options('my dir'), '-v', "#{dir}:/workspace/my dir", *config_volume, 'sndbx:claude'],
+    assert_equal [['docker', *run_options('my dir'), '-v', "#{dir}:/workspace/my dir", *config_volume, *TERMINAL_ENV,
+                   'sndbx:claude'],
                   %w[docker exec -i gifted_mcnulty bash],
                   %w[docker start -ai sleepy_babbage]],
                  logged_commands

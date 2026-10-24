@@ -13,6 +13,8 @@ use crate::{Result, paths, unique};
 pub const MOUNT_ROOT: &str = "/workspace";
 const HOME_ROOT: &str = "/home";
 const ROOT_HOME: &str = "/root";
+// Passed through from the host, what tools tell the terminal's colors and features by; docker sets TERM itself
+const TERMINAL_ENV: [&str; 3] = ["COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"];
 
 pub struct Options {
     pub volumes: Vec<String>,
@@ -106,6 +108,7 @@ impl Sandbox {
             args.extend(["-p".to_string(), port.clone()]);
         }
         // Before the docker args, so those can override the variables
+        args.extend(TERMINAL_ENV.map(|variable| format!("--env={variable}")));
         if self.proxy.is_some() {
             args.extend(proxy::run_args());
         }
@@ -380,6 +383,9 @@ mod tests {
                 "/config/dev:/home/ubuntu/.claude",
                 "-p",
                 "3000:3000",
+                "--env=COLORTERM",
+                "--env=TERM_PROGRAM",
+                "--env=TERM_PROGRAM_VERSION",
                 "--env=FOO=bar",
                 "sndbx-dev",
             ]

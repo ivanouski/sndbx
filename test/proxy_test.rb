@@ -39,8 +39,8 @@ class ProxyTest < SndbxTestCase
                  proxy_calls
     assert_includes File.read(squid_conf), "acl allowed dstdomain -n .openai.com pypi.org\n"
     refute_match(/cafe|f00d/, result.out)
-    assert_equal [*run_options('project'), *volume('project'), *config_volume, *PROXY_ARGS, '--memory=8g',
-                  'sndbx:claude'],
+    assert_equal [*run_options('project'), *volume('project'), *config_volume, *TERMINAL_ENV, *PROXY_ARGS,
+                  '--memory=8g', 'sndbx:claude'],
                  docker_calls.last
   end
 
@@ -344,7 +344,8 @@ class ProxyTest < SndbxTestCase
     sndbx('run', 'claude')
 
     assert_empty proxy_calls
-    assert_equal [*run_options('project'), *volume('project'), *config_volume, 'sndbx:claude'], docker_calls.last
+    assert_equal [*run_options('project'), *volume('project'), *config_volume, *TERMINAL_ENV, 'sndbx:claude'],
+                 docker_calls.last
   end
 
   def test_a_proxied_image_can_not_publish_ports

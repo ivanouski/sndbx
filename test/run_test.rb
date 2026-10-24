@@ -9,7 +9,8 @@ class RunTest < SndbxTestCase
     result = sndbx('run', 'claude')
 
     assert_predicate result, :success?
-    assert_equal [*run_options('project'), *volume('project'), *config_volume, 'sndbx:claude'], docker_calls.last
+    assert_equal [*run_options('project'), *volume('project'), *config_volume, *TERMINAL_ENV, 'sndbx:claude'],
+                 docker_calls.last
     assert File.directory?(default_config_dir)
   end
 
@@ -30,7 +31,7 @@ class RunTest < SndbxTestCase
 
     sndbx('run', 'claude')
 
-    assert_equal ['-v', "#{default_config_dir}:/home/dev/.claude"], docker_calls.last[-3..-2]
+    assert_equal ['-v', "#{default_config_dir}:/home/dev/.claude"], docker_calls.last[-6..-5]
   end
 
   def test_run_mounts_the_config_in_root_home_for_an_image_that_runs_as_root
@@ -39,7 +40,7 @@ class RunTest < SndbxTestCase
 
     sndbx('run', 'claude')
 
-    assert_equal ['-v', "#{default_config_dir}:/root/.claude"], docker_calls.last[-3..-2]
+    assert_equal ['-v', "#{default_config_dir}:/root/.claude"], docker_calls.last[-6..-5]
   end
 
   def test_run_prefers_the_user_in_the_settings
@@ -48,7 +49,7 @@ class RunTest < SndbxTestCase
 
     sndbx('run', 'claude')
 
-    assert_equal ['-v', "#{default_config_dir}:/home/dev/.claude"], docker_calls.last[-3..-2]
+    assert_equal ['-v', "#{default_config_dir}:/home/dev/.claude"], docker_calls.last[-6..-5]
   end
 
   def test_run_with_an_image_that_runs_as_a_uid
@@ -68,7 +69,8 @@ class RunTest < SndbxTestCase
 
     sndbx('run', 'claude', '-v', api, '-v', web)
 
-    assert_equal [*run_options('web'), *volume('api', api), *volume('web', web), *config_volume, 'sndbx:claude'],
+    assert_equal [*run_options('web'), *volume('api', api), *volume('web', web), *config_volume, *TERMINAL_ENV,
+                  'sndbx:claude'],
                  docker_calls.last
   end
 
@@ -78,7 +80,8 @@ class RunTest < SndbxTestCase
 
     sndbx('run', 'claude', '-v', '../api')
 
-    assert_equal [*run_options('api'), *volume('api', api), *config_volume, 'sndbx:claude'], docker_calls.last
+    assert_equal [*run_options('api'), *volume('api', api), *config_volume, *TERMINAL_ENV, 'sndbx:claude'],
+                 docker_calls.last
   end
 
   def test_run_with_workdir
@@ -105,7 +108,7 @@ class RunTest < SndbxTestCase
     sndbx('run', 'claude', '-v', '../garmin/sdk:/opt/garmin/sdk:ro')
 
     assert_equal [*run_options('project'), *volume('project'), '-v', "#{sdk}:/opt/garmin/sdk:ro", *config_volume,
-                  'sndbx:claude'],
+                  *TERMINAL_ENV, 'sndbx:claude'],
                  docker_calls.last
   end
 
@@ -115,7 +118,8 @@ class RunTest < SndbxTestCase
 
     sndbx('run', 'claude', '-v', "#{api}:/workspace/backend/")
 
-    assert_equal [*run_options('backend'), *volume('backend', api), *config_volume, 'sndbx:claude'], docker_calls.last
+    assert_equal [*run_options('backend'), *volume('backend', api), *config_volume, *TERMINAL_ENV, 'sndbx:claude'],
+                 docker_calls.last
   end
 
   def test_run_with_file_volume
@@ -126,7 +130,7 @@ class RunTest < SndbxTestCase
     sndbx('run', 'claude', '-v', '~/.gitconfig:/home/ubuntu/.gitconfig:ro')
 
     assert_equal [*run_options('project'), *volume('project'), '-v', "#{gitconfig}:/home/ubuntu/.gitconfig:ro",
-                  *config_volume, 'sndbx:claude'],
+                  *config_volume, *TERMINAL_ENV, 'sndbx:claude'],
                  docker_calls.last
   end
 
@@ -154,7 +158,8 @@ class RunTest < SndbxTestCase
     sndbx('run', 'claude', '-v', "#{api}:/workspace", '-v', '.:/opt/project')
 
     assert_equal ['run', '--rm', '-it', '--label=sndbx.image=claude', '--workdir=/workspace',
-                  '-v', "#{api}:/workspace", '-v', "#{@work}:/opt/project", *config_volume, 'sndbx:claude'],
+                  '-v', "#{api}:/workspace", '-v', "#{@work}:/opt/project", *config_volume, *TERMINAL_ENV,
+                  'sndbx:claude'],
                  docker_calls.last
   end
 
@@ -252,7 +257,8 @@ class RunTest < SndbxTestCase
     sndbx('run', 'claude', '-p', '3000', '-p', '8080:80', '-p', '53/udp')
 
     assert_equal [*run_options('project'), *volume('project'), *config_volume,
-                  '-p', '127.0.0.1:3080:3080', '-p', '3000:3000', '-p', '8080:80', '-p', '53:53/udp', 'sndbx:claude'],
+                  '-p', '127.0.0.1:3080:3080', '-p', '3000:3000', '-p', '8080:80', '-p', '53:53/udp', *TERMINAL_ENV,
+                  'sndbx:claude'],
                  docker_calls.last
   end
 
@@ -262,7 +268,7 @@ class RunTest < SndbxTestCase
     sndbx('run', 'claude', '--keep')
 
     assert_equal ['run', '-it', '--label=sndbx.image=claude', '--workdir=/workspace/project', *volume('project'),
-                  *config_volume, 'sndbx:claude'],
+                  *config_volume, *TERMINAL_ENV, 'sndbx:claude'],
                  docker_calls.last
   end
 
@@ -274,8 +280,10 @@ class RunTest < SndbxTestCase
     sndbx('run', 'claude', '-v', '-dir', '-w', 'nope', '--workdir', '-dir')
 
     assert_equal [['run', '-it', '--label=sndbx.image=claude', '--workdir=/workspace/project', *volume('project'),
-                   *config_volume, '-p', '3000:3000', '-p', '8080:80', '-p', '53:53/udp', 'sndbx:claude'],
-                  [*run_options('-dir'), *volume('-dir', File.join(@work, '-dir')), *config_volume, 'sndbx:claude']],
+                   *config_volume, '-p', '3000:3000', '-p', '8080:80', '-p', '53:53/udp', *TERMINAL_ENV,
+                   'sndbx:claude'],
+                  [*run_options('-dir'), *volume('-dir', File.join(@work, '-dir')), *config_volume, *TERMINAL_ENV,
+                   'sndbx:claude']],
                  docker_runs
   end
 
@@ -302,7 +310,7 @@ class RunTest < SndbxTestCase
 
     assert_equal [*run_options('project'), *volume('project'),
                   '-v', "#{File.join(@root, 'claude-config')}:/home/dev/.config/claude",
-                  '--memory=8g', '--init', 'mine:claude'],
+                  *TERMINAL_ENV, '--memory=8g', '--init', 'mine:claude'],
                  docker_calls.last
   end
 
@@ -311,7 +319,7 @@ class RunTest < SndbxTestCase
 
     sndbx('run', 'claude', '--', '-v', '/tmp:/tmp', '-p', '3000', '-w', '/tmp')
 
-    assert_equal [*run_options('project'), *volume('project'), *config_volume,
+    assert_equal [*run_options('project'), *volume('project'), *config_volume, *TERMINAL_ENV,
                   '-v', '/tmp:/tmp', '-p', '3000', '-w', '/tmp', 'sndbx:claude'],
                  docker_calls.last
   end
@@ -322,7 +330,7 @@ class RunTest < SndbxTestCase
 
     sndbx('run', 'claude', '-v', '.', '--', '--memory=16g', '-e', 'FOO=bar')
 
-    assert_equal [*run_options('project'), *volume('project'), *config_volume,
+    assert_equal [*run_options('project'), *volume('project'), *config_volume, *TERMINAL_ENV,
                   '--memory=8g', '--memory=16g', '-e', 'FOO=bar', 'sndbx:claude'],
                  docker_calls.last
   end
@@ -336,7 +344,7 @@ class RunTest < SndbxTestCase
 
     sndbx('run', 'claude', '--', '--memory=16g')
 
-    assert_equal [*run_options('project'), *volume('project'), *config_volume,
+    assert_equal [*run_options('project'), *volume('project'), *config_volume, *TERMINAL_ENV,
                   '--security-opt=no-new-privileges', '--pids-limit=4096', '--pids-limit=8192', '--memory=16g',
                   'sndbx:claude'],
                  docker_calls.last
@@ -348,7 +356,8 @@ class RunTest < SndbxTestCase
 
     sndbx('run', 'claude')
 
-    assert_equal [*run_options('project'), *volume('project'), *config_volume, '--pids-limit=4096', 'sndbx:claude'],
+    assert_equal [*run_options('project'), *volume('project'), *config_volume, *TERMINAL_ENV, '--pids-limit=4096',
+                  'sndbx:claude'],
                  docker_calls.last
   end
 

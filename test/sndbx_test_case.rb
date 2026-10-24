@@ -7,6 +7,8 @@ require_relative 'test_helper'
 class SndbxTestCase < Minitest::Test
   include SndbxTestHelper
 
+  TERMINAL_ENV = %w[--env=COLORTERM --env=TERM_PROGRAM --env=TERM_PROGRAM_VERSION].freeze
+
   FAKE_DOCKER = <<~RUBY
     #!#{RbConfig.ruby} --disable-gems
     require 'json'
