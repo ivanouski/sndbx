@@ -6,7 +6,7 @@ require 'shellwords'
 class CompletionTest < Minitest::Test
   include SndbxTestHelper
 
-  COMPLETION = File.expand_path('../completions/_sndbx', __dir__)
+  COMPLETION = File.expand_path('../completions/bash/sndbx', __dir__)
 
   COMPLETE = <<~BASH
     source "$COMPLETION"

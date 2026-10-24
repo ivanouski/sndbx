@@ -20,8 +20,8 @@ cargo install --path .
 Optionally, install the bash completion (bash 4.0+). It completes arguments after `--` with docker's own completion.
 
 ```sh
-cp completions/_sndbx ~/.local/share/bash-completion/completions/sndbx   # with bash-completion
-# or source completions/_sndbx in ~/.bashrc
+cp completions/bash/sndbx ~/.local/share/bash-completion/completions/sndbx   # with bash-completion
+# or source completions/bash/sndbx in ~/.bashrc
 ```
 
 Or the zsh completion. It completes arguments after `--` with docker's zsh completion if it's installed.
