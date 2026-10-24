@@ -6,7 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 RUN apt update && apt upgrade -y && apt install -y --no-install-recommends \
-  curl ca-certificates git openssh-client jq \
+  curl ca-certificates tzdata git openssh-client jq \
   build-essential libpq-dev \
   libglib2.0-0t64 libnspr4 libnss3 libatk1.0-0t64 \
   libxkbcommon0 libasound2t64 libgbm1 libxcomposite1 libxdamage1 \
