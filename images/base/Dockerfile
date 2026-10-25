@@ -27,6 +27,17 @@ ARG PYTHON_VERSION=3.14.7
 ARG RUBY_VERSION=4.0.7
 ARG RUST_VERSION=1.99
 ARG POSTGRES_VERSION=18.6
+# sndbx passes the host user's on Linux, so the agent can write to the mounts
+ARG UID=1000
+ARG GID=1000
+
+# Before the tools, so they're owned by the user too; -o allows ids the image already has.
+# usermod moves the user's record in lastlog and faillog to an offset of uid × record size, which a layer stores in
+# full, so a large uid would make it huge
+RUN rm -f /var/log/lastlog /var/log/faillog \
+  && groupmod -o -g "${GID}" "${USER}" \
+  && usermod -o -u "${UID}" "${USER}" \
+  && chown -R "${UID}:${GID}" "/home/${USER}"
 
 USER ${USER}
 ENV HOME=/home/${USER}

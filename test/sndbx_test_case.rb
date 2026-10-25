@@ -9,6 +9,9 @@ class SndbxTestCase < Minitest::Test
 
   TERMINAL_ENV = %w[--env=COLORTERM --env=TERM_PROGRAM --env=TERM_PROGRAM_VERSION].freeze
   CONTAINER_NAMES = ['ps', '--all', '--format', '{{.Names}}'].freeze
+  # The uid and gid base is built with, the host user's on Linux unless it's root, which the fake docker's daemon
+  # doesn't map
+  HOST_IDS = ([Process.euid, Process.egid] if RbConfig::CONFIG['host_os'].include?('linux') && !Process.euid.zero?)
 
   FAKE_DOCKER = <<~RUBY
     #!#{RbConfig.ruby} --disable-gems
@@ -26,6 +29,8 @@ class SndbxTestCase < Minitest::Test
     case ARGV
     in ['info']
       exit(!ENV.key?('DOCKER_STOPPED'))
+    in ['info', '--format', '{{.SecurityOptions}}']
+      puts ENV.fetch('DOCKER_SECURITY_OPTIONS', '[name=seccomp,profile=builtin name=cgroupns]')
     in ['image', 'inspect', tag]
       exit(images.key?(tag))
     in ['image', 'inspect', '--format', '{{.Config.User}}', tag]
@@ -205,8 +210,10 @@ class SndbxTestCase < Minitest::Test
     File.join(@home, '.config', 'sndbx', 'claude')
   end
 
-  def build_call(name, base: false, prefix: 'sndbx')
+  # Base with `ids`, the host user's by default
+  def build_call(name, base: false, prefix: 'sndbx', ids: HOST_IDS)
     args = base ? ['--build-arg', "TAG_PREFIX=#{prefix}"] : []
+    args += ['--build-arg', "UID=#{ids[0]}", '--build-arg', "GID=#{ids[1]}"] if name == 'base' && ids
     ['build', '--no-cache', *args, '-t', "#{prefix}:#{name}", File.join(@images_dir, name)]
   end
 end

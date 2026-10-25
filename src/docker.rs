@@ -1,5 +1,6 @@
 use std::fs::OpenOptions;
 use std::io::{IsTerminal, Write};
+use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -32,6 +33,37 @@ pub fn image_exists(tag: &str) -> bool {
 pub fn image_user(tag: &str) -> Option<String> {
     output(&["image", "inspect", "--format", "{{.Config.User}}", tag])
         .map(|user| user.trim().to_string())
+}
+
+/// A user's uid and gid
+pub struct Ids {
+    pub uid: u32,
+    pub gid: u32,
+}
+
+/// The ids base is built with, the host user's on Linux, as bind mounts keep the host's owners there; `None` for
+/// the image's own: on other hosts, whose docker maps the owners, for root, and when the daemon maps the users
+/// itself, rootless or with userns-remap
+pub fn host_ids() -> Option<Ids> {
+    if !cfg!(target_os = "linux") {
+        return None;
+    }
+    // Owned by the process's effective user and group
+    let process = std::fs::metadata("/proc/self").ok()?;
+    if process.uid() == 0 {
+        return None;
+    }
+    let security_options = output(&["info", "--format", "{{.SecurityOptions}}"])?;
+    (!has_user_mapping(&security_options)).then(|| Ids {
+        uid: process.uid(),
+        gid: process.gid(),
+    })
+}
+
+fn has_user_mapping(security_options: &str) -> bool {
+    ["name=rootless", "name=userns"]
+        .iter()
+        .any(|option| security_options.contains(option))
 }
 
 /// `None` if the network doesn't exist
@@ -231,4 +263,23 @@ fn run_quietly(args: &[&str]) -> Option<bool> {
         .status()
         .ok()
         .map(|status| status.success())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_mappings() {
+        assert!(!has_user_mapping(
+            "[name=seccomp,profile=builtin name=cgroupns]"
+        ));
+        assert!(!has_user_mapping(""));
+        assert!(has_user_mapping(
+            "[name=seccomp,profile=builtin name=rootless name=cgroupns]"
+        ));
+        assert!(has_user_mapping(
+            "[name=userns name=seccomp,profile=builtin]"
+        ));
+    }
 }

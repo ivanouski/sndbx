@@ -27,6 +27,18 @@ class BuildTest < SndbxTestCase
     assert_equal [build_call('claude', base: true)], docker_builds
   end
 
+  def test_build_base_keeps_the_image_user_with_a_daemon_that_maps_users
+    write_build_settings
+
+    %w[rootless userns].each do |option|
+      options = "[name=seccomp,profile=builtin name=#{option}]"
+      result = sndbx('build', '-b', env: { 'DOCKER_SECURITY_OPTIONS' => options })
+
+      assert_predicate result, :success?
+      assert_equal build_call('base', ids: nil), docker_builds.last, option
+    end
+  end
+
   def test_build_image_without_base
     write_build_settings
 

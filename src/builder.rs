@@ -137,6 +137,14 @@ impl Builder {
         if self.needs_base(name)? {
             args.extend(["--build-arg", &tag_prefix_arg]);
         }
+        let ids_args = if name == BASE_NAME {
+            docker::host_ids().map(|ids| [format!("UID={}", ids.uid), format!("GID={}", ids.gid)])
+        } else {
+            None
+        };
+        for arg in ids_args.iter().flatten() {
+            args.extend(["--build-arg", arg]);
+        }
         args.extend(["-t", &tag, &image_dir]);
 
         print_status(&format!("Building {tag} from {image_dir}"));

@@ -125,7 +125,7 @@ sndbx logs proxy --denied                             # only the denied ones
 - names the container after the host directory it starts in, `my-project` for `~/src/my-project`, or `my-project-1`, `my-project-2`, … when a container, running or not, already has the name; each run of other characters than letters, digits, `_` and `-`, dots included, becomes a single `-`, dropped at the ends, and a directory with none of those leaves the name to docker; `sndbx-proxy` is reserved for the proxy; `-- --name=<name>` names it yourself
 - with `proxy` set, runs it on `sndbx-internal` behind `sndbx-proxy`, unless the image has `proxy: false`, see **Network** above
 
-**On Linux**, the images run as uid 1000; with another host uid, the agent can't write to its config directory or the mounted projects. Grant it access with ACLs:
+**On Linux**, bind mounts keep the host's owners, so `sndbx build` builds `sndbx:base` with your uid and gid, and the images on it run as you and can write to their config directory and the mounted projects. As root, base keeps the image's uid 1000. A rootless or userns-remapped docker runs the container's users as other ids on the host, so base keeps uid 1000 there too, and its images can't write to the mounts; sndbx doesn't handle that. An image not built on base runs as whoever its Dockerfile says; grant that uid access with ACLs, here 1000:
 
 ```sh
 setfacl -m u:1000:rwx,d:u:1000:rwx ~/.config/sndbx/claude
@@ -146,7 +146,7 @@ sndbx build -b                 # rebuild sndbx:base only
 `sndbx build`:
 
 - builds each image from `images/<name>/`, without the docker cache
-- builds `sndbx:base` first if an image needs it and it doesn't exist, or with `-b`
+- builds `sndbx:base` first if an image needs it and it doesn't exist, or with `-b`; on Linux with your uid and gid, see **On Linux** above
 - appends `- name: '<image>'` to the settings' `images` for an image that isn't there yet, so `sndbx run <image>` works right away, followed by the keys in `images/<image>/sndbx.yml` if it has one
 - prints the entry to add instead when it can't tell where to append
 
