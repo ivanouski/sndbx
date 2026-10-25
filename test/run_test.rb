@@ -14,6 +14,62 @@ class RunTest < SndbxTestCase
     assert File.directory?(default_config_dir)
   end
 
+  def test_run_names_the_container_after_the_directory
+    write_claude_settings
+
+    result = sndbx('run', 'claude')
+
+    assert_equal "==> Starting project\n", result.out
+    assert_includes docker_calls, CONTAINER_NAMES
+  end
+
+  def test_run_suffixes_the_name_with_the_lowest_free_number
+    write_claude_settings
+    add_docker_container('claude', 'project')
+    add_docker_container('codex', 'project-1', 'exited')
+    add_docker_container('claude', 'project-3')
+
+    result = sndbx('run', 'claude')
+
+    assert_equal "==> Starting project-2\n", result.out
+    assert_includes docker_calls.last, '--name=project-2'
+  end
+
+  def test_run_does_not_take_the_proxy_name
+    write_claude_settings
+    dir = mkdir('work/sndbx-proxy')
+
+    result = sndbx('run', 'claude', '-v', dir)
+
+    assert_equal "==> Starting sndbx-proxy-1\n", result.out
+  end
+
+  def test_run_leaves_the_name_to_docker_when_the_directory_name_has_nothing_docker_allows
+    write_claude_settings
+    dir = mkdir('work/проект')
+
+    result = sndbx('run', 'claude', '-v', dir)
+
+    assert_empty result.out
+    assert_equal [*run_options('проект', name: nil), *volume('проект', dir), *config_volume, *TERMINAL_ENV,
+                  'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_run_with_a_name_in_the_docker_args_leaves_it_be
+    write_settings(images: [{ name: 'claude', user: 'ubuntu', docker_args: ['--name=from-settings'] }])
+    add_docker_image('sndbx:claude')
+
+    result = sndbx('run', 'claude')
+    sndbx('run', 'claude', '--', '--name', 'custom')
+
+    assert_empty result.out
+    refute_includes docker_calls, CONTAINER_NAMES
+    run_args = [*run_options('project', name: nil), *volume('project'), *config_volume, *TERMINAL_ENV,
+                '--name=from-settings']
+    assert_equal [[*run_args, 'sndbx:claude'], [*run_args, '--name', 'custom', 'sndbx:claude']], docker_runs
+  end
+
   def test_run_checks_docker_before_running
     write_claude_settings
 
@@ -118,7 +174,8 @@ class RunTest < SndbxTestCase
 
     sndbx('run', 'claude', '-v', "#{api}:/workspace/backend/")
 
-    assert_equal [*run_options('backend'), *volume('backend', api), *config_volume, *TERMINAL_ENV, 'sndbx:claude'],
+    assert_equal [*run_options('backend', name: 'api'), *volume('backend', api), *config_volume, *TERMINAL_ENV,
+                  'sndbx:claude'],
                  docker_calls.last
   end
 
@@ -157,7 +214,7 @@ class RunTest < SndbxTestCase
 
     sndbx('run', 'claude', '-v', "#{api}:/workspace", '-v', '.:/opt/project')
 
-    assert_equal ['run', '--rm', '-it', '--label=sndbx.image=claude', '--workdir=/workspace',
+    assert_equal ['run', '--rm', '-it', '--label=sndbx.image=claude', '--name=api', '--workdir=/workspace',
                   '-v', "#{api}:/workspace", '-v', "#{@work}:/opt/project", *config_volume, *TERMINAL_ENV,
                   'sndbx:claude'],
                  docker_calls.last
@@ -267,8 +324,8 @@ class RunTest < SndbxTestCase
 
     sndbx('run', 'claude', '--keep')
 
-    assert_equal ['run', '-it', '--label=sndbx.image=claude', '--workdir=/workspace/project', *volume('project'),
-                  *config_volume, *TERMINAL_ENV, 'sndbx:claude'],
+    assert_equal ['run', '-it', '--label=sndbx.image=claude', '--name=project', '--workdir=/workspace/project',
+                  *volume('project'), *config_volume, *TERMINAL_ENV, 'sndbx:claude'],
                  docker_calls.last
   end
 
@@ -279,11 +336,11 @@ class RunTest < SndbxTestCase
     sndbx('run', '--kee', '-kp3000', '--publish=8080:80', '--pub', '53/udp', 'claude')
     sndbx('run', 'claude', '-v', '-dir', '-w', 'nope', '--workdir', '-dir')
 
-    assert_equal [['run', '-it', '--label=sndbx.image=claude', '--workdir=/workspace/project', *volume('project'),
-                   *config_volume, '-p', '3000:3000', '-p', '8080:80', '-p', '53:53/udp', *TERMINAL_ENV,
-                   'sndbx:claude'],
-                  [*run_options('-dir'), *volume('-dir', File.join(@work, '-dir')), *config_volume, *TERMINAL_ENV,
-                   'sndbx:claude']],
+    assert_equal [['run', '-it', '--label=sndbx.image=claude', '--name=project', '--workdir=/workspace/project',
+                   *volume('project'), *config_volume, '-p', '3000:3000', '-p', '8080:80', '-p', '53:53/udp',
+                   *TERMINAL_ENV, 'sndbx:claude'],
+                  [*run_options('-dir', name: 'dir'), *volume('-dir', File.join(@work, '-dir')), *config_volume,
+                   *TERMINAL_ENV, 'sndbx:claude']],
                  docker_runs
   end
 

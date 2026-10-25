@@ -8,6 +8,7 @@ class SndbxTestCase < Minitest::Test
   include SndbxTestHelper
 
   TERMINAL_ENV = %w[--env=COLORTERM --env=TERM_PROGRAM --env=TERM_PROGRAM_VERSION].freeze
+  CONTAINER_NAMES = ['ps', '--all', '--format', '{{.Names}}'].freeze
 
   FAKE_DOCKER = <<~RUBY
     #!#{RbConfig.ruby} --disable-gems
@@ -34,9 +35,10 @@ class SndbxTestCase < Minitest::Test
       status = filters.find { |arg| arg.start_with?('status=') }&.delete_prefix('status=')
       status ||= 'running' unless filters.include?('--all')
       ancestor = filters.find { |arg| arg.start_with?('ancestor=') }&.delete_prefix('ancestor=')
+      label = filters.find { |arg| arg.start_with?('label=') }
       containers.each do |image, name, state = 'running', tag = "sndbx:\#{image}"|
         next if status && state != status
-        next unless ancestor ? tag == ancestor : filters.include?("label=sndbx.image=\#{image}")
+        next if ancestor ? tag != ancestor : label && label != "label=sndbx.image=\#{image}"
 
         puts name
       end
@@ -187,8 +189,8 @@ class SndbxTestCase < Minitest::Test
     docker_calls.select { |call| call.first == 'build' }
   end
 
-  def run_options(workdir)
-    ['run', '--rm', '-it', '--label=sndbx.image=claude', "--workdir=/workspace/#{workdir}"]
+  def run_options(workdir, name: File.basename(workdir))
+    ['run', '--rm', '-it', '--label=sndbx.image=claude', *("--name=#{name}" if name), "--workdir=/workspace/#{workdir}"]
   end
 
   def volume(name, path = @work)

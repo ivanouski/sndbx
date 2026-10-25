@@ -8,7 +8,7 @@ use crate::docker::{self, IMAGE_LABEL, image_user};
 use crate::paths::{expand_path, is_same_file, join, normalize};
 use crate::proxy::{self, Proxy};
 use crate::settings::{self, Image};
-use crate::{Result, paths, unique};
+use crate::{Result, paths, print_status, unique};
 
 pub const MOUNT_ROOT: &str = "/workspace";
 const HOME_ROOT: &str = "/home";
@@ -88,10 +88,35 @@ impl Sandbox {
         if let Some(proxy) = &self.proxy {
             proxy::ensure(proxy)?;
         }
-        docker::exec(&self.run_args(&config_target))
+        let name = self.container_name()?;
+        if let Some(name) = &name {
+            print_status(&format!("Starting {name}"));
+        }
+        docker::exec(&self.run_args(&config_target, name.as_deref()))
     }
 
-    fn run_args(&self, config_target: &str) -> Vec<String> {
+    /// After the host directory mounted at the workdir, so it's easy to exec into; `None` leaves the name to docker,
+    /// or to `--name` in the docker args
+    fn container_name(&self) -> Result<Option<String>> {
+        if has_name_arg(&self.docker_args) {
+            return Ok(None);
+        }
+        let Some(base) = self
+            .volumes
+            .iter()
+            .find(|volume| volume.target == self.workdir)
+            .and_then(|volume| volume.source.file_name())
+            .and_then(|name| container_base(&name.to_string_lossy()))
+        else {
+            return Ok(None);
+        };
+        // Even when the proxy is off, so a sandbox can't pass for it once it's on
+        let mut taken = docker::container_names()?;
+        taken.push(proxy::CONTAINER.to_string());
+        Ok(Some(free_name(&base, &taken)))
+    }
+
+    fn run_args(&self, config_target: &str, name: Option<&str>) -> Vec<String> {
         let mut args = vec!["run".to_string()];
         if !self.keep {
             args.push("--rm".to_string());
@@ -99,8 +124,11 @@ impl Sandbox {
         args.extend([
             "-it".to_string(),
             format!("--label={IMAGE_LABEL}={}", self.image.name),
-            format!("--workdir={}", self.workdir),
         ]);
+        if let Some(name) = name {
+            args.push(format!("--name={name}"));
+        }
+        args.push(format!("--workdir={}", self.workdir));
         for volume in self.volume_specs(config_target) {
             args.extend(["-v".to_string(), volume]);
         }
@@ -184,6 +212,46 @@ fn ports(image: &Image, extra: &[String], proxied: bool) -> Result<Vec<String>> 
         );
     }
     Ok(ports)
+}
+
+/// Docker's `--name NAME` or `--name=NAME`
+fn has_name_arg(docker_args: &[String]) -> bool {
+    docker_args
+        .iter()
+        .any(|arg| arg == "--name" || arg.starts_with("--name="))
+}
+
+/// Fits docker's `[a-zA-Z0-9][a-zA-Z0-9_.-]*` without the `.`, so a name can't pass for a host behind the proxy,
+/// each run of other characters between fitting ones a `-`; `None` if nothing fits
+fn container_base(dir_name: &str) -> Option<String> {
+    let mut base = String::new();
+    let mut replaced = false;
+    for c in dir_name.chars() {
+        if !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-')) {
+            replaced = true;
+            continue;
+        }
+        if replaced && !base.is_empty() {
+            base.push('-');
+        }
+        replaced = false;
+        base.push(c);
+    }
+    let base = base.trim_start_matches(|c: char| !c.is_ascii_alphanumeric());
+    (!base.is_empty()).then(|| base.to_string())
+}
+
+/// `base`, or the lowest free `base-N`; docker wants two characters at least, so `a` starts at `a-1`
+fn free_name(base: &str, taken: &[String]) -> String {
+    let is_free = |name: &str| !taken.iter().any(|taken| taken == name);
+    if base.len() > 1 && is_free(base) {
+        return base.to_string();
+    }
+    // One more than are taken is free at the latest
+    (1..=taken.len() + 1)
+        .map(|n| format!("{base}-{n}"))
+        .find(|name| is_free(name))
+        .expect("a free name")
 }
 
 /// `user` is like docker's `--user`; `None` for a uid
@@ -378,12 +446,13 @@ mod tests {
     #[test]
     fn run_args() {
         assert_eq!(
-            sandbox(false, None).run_args("/home/ubuntu/.claude"),
+            sandbox(false, None).run_args("/home/ubuntu/.claude", Some("app")),
             [
                 "run",
                 "--rm",
                 "-it",
                 &format!("--label={IMAGE_LABEL}=dev"),
+                "--name=app",
                 "--workdir=/workspace/app",
                 "-v",
                 "/src/app:/workspace/app:ro",
@@ -406,7 +475,7 @@ mod tests {
             image: "squid".to_string(),
             hosts: proxy::Hosts::All,
         };
-        let args = sandbox(true, Some(proxy)).run_args("/home/ubuntu/.claude");
+        let args = sandbox(true, Some(proxy)).run_args("/home/ubuntu/.claude", None);
         assert!(!args.contains(&"--rm".to_string()));
         let proxy_args = proxy::run_args();
         let start = args.iter().position(|arg| *arg == proxy_args[0]).unwrap();
@@ -415,6 +484,63 @@ mod tests {
             args[start + proxy_args.len()..],
             ["--env=FOO=bar", "sndbx-dev"]
         );
+    }
+
+    #[test]
+    fn run_args_without_a_name() {
+        let args = sandbox(false, None).run_args("/home/ubuntu/.claude", None);
+        assert!(!args.iter().any(|arg| arg.starts_with("--name")));
+    }
+
+    #[test]
+    fn container_bases() {
+        assert_eq!(container_base("hdf").as_deref(), Some("hdf"));
+        assert_eq!(
+            container_base("my_app.v2-x").as_deref(),
+            Some("my_app-v2-x")
+        );
+        assert_eq!(
+            container_base("kubernetes.io").as_deref(),
+            Some("kubernetes-io")
+        );
+        assert_eq!(container_base("my  app").as_deref(), Some("my-app"));
+        assert_eq!(container_base(".dotfiles").as_deref(), Some("dotfiles"));
+        assert_eq!(container_base("_-x").as_deref(), Some("x"));
+        assert_eq!(container_base("café").as_deref(), Some("caf"));
+        assert_eq!(
+            container_base("my app (old)").as_deref(),
+            Some("my-app-old")
+        );
+        assert_eq!(container_base("проект-2").as_deref(), Some("2"));
+        for unusable in ["", "проект", "...", "_-"] {
+            assert_eq!(container_base(unusable), None, "{unusable}");
+        }
+    }
+
+    #[test]
+    fn free_names() {
+        let taken = |names: &[&str]| names.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(free_name("hdf", &[]), "hdf");
+        assert_eq!(free_name("hdf", &taken(&["other", "hdf-1"])), "hdf");
+        assert_eq!(free_name("hdf", &taken(&["hdf"])), "hdf-1");
+        assert_eq!(
+            free_name("hdf", &taken(&["hdf", "hdf-1", "hdf-3"])),
+            "hdf-2"
+        );
+        assert_eq!(free_name("foo-1", &taken(&["foo-1"])), "foo-1-1");
+        assert_eq!(free_name("a", &[]), "a-1");
+    }
+
+    #[test]
+    fn name_args() {
+        let args = |args: &[&str]| args.iter().map(ToString::to_string).collect::<Vec<_>>();
+        assert!(has_name_arg(&args(&["--memory=8g", "--name", "custom"])));
+        assert!(has_name_arg(&args(&["--name=custom"])));
+        assert!(!has_name_arg(&args(&[
+            "--memory=8g",
+            "--env=NAME=x",
+            "--names"
+        ])));
     }
 
     #[test]

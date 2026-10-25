@@ -18,7 +18,7 @@ class ProxyTest < SndbxTestCase
     sndbx('run', 'claude')
 
     assert_equal [['info'], %w[image inspect sndbx:claude],
-                  ['image', 'inspect', '--format', '{{.Config.User}}', 'sndbx:claude']],
+                  ['image', 'inspect', '--format', '{{.Config.User}}', 'sndbx:claude'], CONTAINER_NAMES],
                  docker_calls[0..-2]
     refute File.exist?(squid_conf)
   end
@@ -435,7 +435,8 @@ class ProxyTest < SndbxTestCase
   # The docker calls between checking the image and running the sandbox
   def proxy_calls
     docker_calls.reject do |call|
-      call == ['info'] || call.first(2) == %w[image inspect] || call.first(3) == %w[run --rm -it]
+      [['info'], CONTAINER_NAMES].include?(call) || call.first(2) == %w[image inspect] ||
+        call.first(3) == %w[run --rm -it]
     end
   end
 end

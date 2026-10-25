@@ -13,8 +13,8 @@ class LogsTest < SndbxTestCase
     sndbx('exec', 'claude', 'gifted_mcnulty', 'bash')
     sndbx('resume', 'claude', 'sleepy_babbage')
 
-    assert_equal [['docker', *run_options('my dir'), '-v', "#{dir}:/workspace/my dir", *config_volume, *TERMINAL_ENV,
-                   'sndbx:claude'],
+    assert_equal [['docker', *run_options('my dir', name: 'my-dir'), '-v', "#{dir}:/workspace/my dir", *config_volume,
+                   *TERMINAL_ENV, 'sndbx:claude'],
                   %w[docker exec -i gifted_mcnulty bash],
                   %w[docker start -ai sleepy_babbage]],
                  logged_commands
@@ -49,7 +49,7 @@ class LogsTest < SndbxTestCase
 
     assert_predicate result, :success?
     assert_match(/\AWarning: can't write #{Regexp.escape(log_path)}: /, result.err)
-    assert_equal run_options('project'), docker_calls.last.first(5)
+    assert_equal run_options('project'), docker_calls.last.first(6)
   end
 
   def test_logs_under_xdg_state_home

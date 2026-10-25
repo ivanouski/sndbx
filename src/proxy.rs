@@ -9,7 +9,7 @@ use crate::docker::{self, ContainerState, container_state, network_internal};
 use crate::{Result, paths};
 
 const NETWORK: &str = "sndbx-internal";
-const CONTAINER: &str = "sndbx-proxy";
+pub const CONTAINER: &str = "sndbx-proxy";
 const PORT: u16 = 3128;
 // What tools read the proxy from, and the hosts to bypass it for
 const PROXY_ENV: [&str; 4] = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"];

@@ -99,6 +99,11 @@ pub fn stopped_containers(image: &str) -> Result<Vec<String>> {
     ])
 }
 
+/// Every container, as docker's names are unique across them all
+pub fn container_names() -> Result<Vec<String>> {
+    containers(&["--all"])
+}
+
 /// Any containers using the image, which keep docker from removing it
 pub fn image_containers(tag: &str) -> Result<Vec<String>> {
     containers(&["--all", "--filter", &format!("ancestor={tag}")])

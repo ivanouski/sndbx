@@ -99,9 +99,9 @@ sndbx run claude -v ./sdk:/opt/sdk:ro                 # mount a read-only SDK, s
 sndbx run claude -p 3000 -p 8080:80                   # publish ports, 3000 means 3000:3000
 sndbx run claude -k                                   # keep the container after it exits, for resume
 sndbx run claude -- --memory=8g -e FOO=bar            # pass extra arguments to docker run
-sndbx exec claude gifted_mcnulty bash                 # run a command in a running sandbox
-sndbx exec -u root claude gifted_mcnulty bash         # as root
-sndbx resume claude sleepy_babbage                    # restart a stopped sandbox
+sndbx exec claude my-project bash                     # run a command in a running sandbox
+sndbx exec -u root claude my-project bash             # as root
+sndbx resume claude my-project-1                      # restart a stopped sandbox
 sndbx list configured                                 # image names in the settings
 sndbx list buildable                                  # image names build accepts
 sndbx list running claude                             # claude's running sandboxes
@@ -122,6 +122,7 @@ sndbx logs proxy --denied                             # only the denied ones
 - passes `COLORTERM`, `TERM_PROGRAM` and `TERM_PROGRAM_VERSION` through from the host, so tools in it see the terminal's colors and features
 - passes the top-level `docker_args`, then the image's, then everything after `--` to `docker run`
 - labels the container `sndbx.image=<name>`, which `exec`, `resume` and `list` find it by
+- names the container after the host directory it starts in, `my-project` for `~/src/my-project`, or `my-project-1`, `my-project-2`, … when a container, running or not, already has the name; each run of other characters than letters, digits, `_` and `-`, dots included, becomes a single `-`, dropped at the ends, and a directory with none of those leaves the name to docker; `sndbx-proxy` is reserved for the proxy; `-- --name=<name>` names it yourself
 - with `proxy` set, runs it on `sndbx-internal` behind `sndbx-proxy`, unless the image has `proxy: false`, see **Network** above
 
 Every docker command sndbx runs is logged to `~/.local/state/sndbx/sndbx.log` (`$XDG_STATE_HOME/sndbx/` if set), which `sndbx logs commands` follows. The proxy's config is there too: `squid.conf`, which the proxy mounts, and `squid.conf.loaded`, the last one it loaded.
