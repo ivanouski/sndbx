@@ -125,6 +125,13 @@ sndbx logs proxy --denied                             # only the denied ones
 - names the container after the host directory it starts in, `my-project` for `~/src/my-project`, or `my-project-1`, `my-project-2`, … when a container, running or not, already has the name; each run of other characters than letters, digits, `_` and `-`, dots included, becomes a single `-`, dropped at the ends, and a directory with none of those leaves the name to docker; `sndbx-proxy` is reserved for the proxy; `-- --name=<name>` names it yourself
 - with `proxy` set, runs it on `sndbx-internal` behind `sndbx-proxy`, unless the image has `proxy: false`, see **Network** above
 
+**On Linux**, the images run as uid 1000; with another host uid, the agent can't write to its config directory or the mounted projects. Grant it access with ACLs:
+
+```sh
+setfacl -m u:1000:rwx,d:u:1000:rwx ~/.config/sndbx/claude
+setfacl -R -m u:1000:rwX,d:u:1000:rwX ~/src/my-project
+```
+
 Every docker command sndbx runs is logged to `~/.local/state/sndbx/sndbx.log` (`$XDG_STATE_HOME/sndbx/` if set), which `sndbx logs commands` follows. The proxy's config is there too: `squid.conf`, which the proxy mounts, and `squid.conf.loaded`, the last one it loaded.
 
 ## Build
