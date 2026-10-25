@@ -34,7 +34,7 @@ impl NewEntry {
         };
         // The keys must parse the same indented under the name, which flow style or a second document wouldn't
         let parsed: Option<Vec<Entry>> = serde_norway::from_str(&new.item(0)).ok();
-        if parsed.as_deref() != Some(std::slice::from_ref(&new.entry)) {
+        if parsed != Some(vec![new.entry.clone()]) {
             bail!(
                 "invalid {}: write each key at the start of a line",
                 path.display()
@@ -248,7 +248,8 @@ fn comment_out(lines: &[&str], item: &ListItem, marker: &str) -> String {
 }
 
 fn is_blank_or_comment(line: &str) -> bool {
-    matches!(line.trim_start().chars().next(), None | Some('#'))
+    let line = line.trim_start();
+    line.is_empty() || line.starts_with('#')
 }
 
 /// Commenting out every entry leaves no list, not an empty one

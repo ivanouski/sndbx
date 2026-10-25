@@ -58,11 +58,7 @@ impl Sandbox {
         docker_args.extend(options.docker_args);
 
         let volumes = volumes(&options.volumes)?;
-        let workdir = match options.workdir {
-            Some(name) => Some(workdir_target(&name)),
-            None => default_workdir(&volumes),
-        };
-        let workdir = check_workdir(&volumes, workdir.as_deref().unwrap_or_default())?;
+        let workdir = workdir(&volumes, options.workdir.as_deref())?;
 
         let ports = ports(&image, &options.ports, options.proxy.is_some())?;
 
@@ -111,8 +107,8 @@ impl Sandbox {
             return Ok(None);
         };
         // Even when the proxy is off, so a sandbox can't pass for it once it's on
-        let mut taken = docker::container_names()?;
-        taken.push(proxy::CONTAINER.to_string());
+        let mut taken: HashSet<String> = docker::container_names()?.into_iter().collect();
+        taken.insert(proxy::CONTAINER.to_string());
         Ok(Some(free_name(&base, &taken)))
     }
 
@@ -171,20 +167,24 @@ impl Sandbox {
     }
 }
 
-/// The sandbox starts in a directory volume
-fn check_workdir(volumes: &[Volume], workdir: &str) -> Result<String> {
+/// The directory volume the sandbox starts in, `name`'s or the default
+fn workdir(volumes: &[Volume], name: Option<&str>) -> Result<String> {
     let targets = directory_targets(volumes);
-    if targets.is_empty() {
+    let Some(default) = default_workdir(&targets) else {
         bail!("no directory volume to start in");
-    }
-    if targets.contains(&workdir) {
-        return Ok(workdir.to_string());
+    };
+    let Some(name) = name else {
+        return Ok(default.to_string());
+    };
+    let workdir = workdir_target(name);
+    if targets.contains(&workdir.as_str()) {
+        return Ok(workdir);
     }
 
     let names: Vec<&str> = targets.iter().map(|target| workdir_name(target)).collect();
     bail!(
         "workdir '{}' is not a directory volume, expected one of: {}",
-        workdir_name(workdir),
+        workdir_name(&workdir),
         names.join(", ")
     )
 }
@@ -224,34 +224,29 @@ fn has_name_arg(docker_args: &[String]) -> bool {
 /// Fits docker's `[a-zA-Z0-9][a-zA-Z0-9_.-]*` without the `.`, so a name can't pass for a host behind the proxy,
 /// each run of other characters between fitting ones a `-`; `None` if nothing fits
 fn container_base(dir_name: &str) -> Option<String> {
-    let mut base = String::new();
-    let mut replaced = false;
-    for c in dir_name.chars() {
-        if !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-')) {
-            replaced = true;
-            continue;
-        }
-        if replaced && !base.is_empty() {
-            base.push('-');
-        }
-        replaced = false;
-        base.push(c);
-    }
-    let base = base.trim_start_matches(|c: char| !c.is_ascii_alphanumeric());
+    let is_name_char = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '-';
+    let base = dir_name
+        .split(|c| !is_name_char(c))
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    let base = base.trim_start_matches(['_', '-']);
     (!base.is_empty()).then(|| base.to_string())
 }
 
 /// `base`, or the lowest free `base-N`; docker wants two characters at least, so `a` starts at `a-1`
-fn free_name(base: &str, taken: &[String]) -> String {
-    let is_free = |name: &str| !taken.iter().any(|taken| taken == name);
-    if base.len() > 1 && is_free(base) {
+fn free_name(base: &str, taken: &HashSet<String>) -> String {
+    if base.len() > 1 && !taken.contains(base) {
         return base.to_string();
     }
-    // One more than are taken is free at the latest
-    (1..=taken.len() + 1)
-        .map(|n| format!("{base}-{n}"))
-        .find(|name| is_free(name))
-        .expect("a free name")
+    let mut n = 1;
+    loop {
+        let name = format!("{base}-{n}");
+        if !taken.contains(&name) {
+            return name;
+        }
+        n += 1;
+    }
 }
 
 /// `user` is like docker's `--user`; `None` for a uid
@@ -272,15 +267,14 @@ fn directory_targets(volumes: &[Volume]) -> Vec<&str> {
         .collect()
 }
 
-/// The last directory volume in the workspace, or the last one anywhere
-fn default_workdir(volumes: &[Volume]) -> Option<String> {
-    let targets = directory_targets(volumes);
+/// The last target in the workspace, or the last one anywhere; `None` when there are none
+fn default_workdir<'a>(targets: &[&'a str]) -> Option<&'a str> {
     targets
         .iter()
         .rev()
         .find(|target| is_in_workspace(target))
         .or(targets.last())
-        .map(ToString::to_string)
+        .copied()
 }
 
 fn volumes(specs: &[String]) -> Result<Vec<Volume>> {
@@ -293,11 +287,10 @@ fn volumes(specs: &[String]) -> Result<Vec<Volume>> {
     }
 
     let mut targets = HashSet::new();
-    if let Some(volume) = volumes
-        .iter()
-        .find(|volume| !targets.insert(&volume.target))
-    {
-        bail!("more than one volume is mounted at {}", volume.target);
+    for volume in &volumes {
+        if !targets.insert(&volume.target) {
+            bail!("more than one volume is mounted at {}", volume.target);
+        }
     }
 
     Ok(volumes)
@@ -369,16 +362,16 @@ fn normalize_port(spec: &str) -> Result<String> {
         Some(_) => return Err(invalid()),
     };
 
-    // Two fields are HOST:CONTAINER, or HOST_IP:CONTAINER when the first has dots
     let fields: Vec<&str> = numbers.split(':').collect();
-    let (host_ip, ports) = match fields.as_slice() {
-        [ip, ports @ ..] if fields.len() == 3 || ip.contains('.') => (Some(*ip), ports),
-        ports => (None, ports),
+    let valid = match fields.as_slice() {
+        [port] => is_digits(port),
+        // HOST_IP:CONTAINER when the first has dots
+        [ip, port] if ip.contains('.') => is_ipv4(ip) && is_digits(port),
+        [host, container] => is_digits(host) && is_digits(container),
+        [ip, host, container] => is_ipv4(ip) && is_digits(host) && is_digits(container),
+        _ => false,
     };
-    if !matches!(ports.len(), 1 | 2)
-        || host_ip.is_some_and(|ip| ip.parse::<Ipv4Addr>().is_err())
-        || !ports.iter().all(|port| is_digits(port))
-    {
+    if !valid {
         return Err(invalid());
     }
 
@@ -391,6 +384,10 @@ fn normalize_port(spec: &str) -> Result<String> {
 
 fn is_digits(text: &str) -> bool {
     !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn is_ipv4(text: &str) -> bool {
+    text.parse::<Ipv4Addr>().is_ok()
 }
 
 fn mount_target(name: &str) -> String {
@@ -519,8 +516,8 @@ mod tests {
 
     #[test]
     fn free_names() {
-        let taken = |names: &[&str]| names.iter().map(ToString::to_string).collect::<Vec<_>>();
-        assert_eq!(free_name("hdf", &[]), "hdf");
+        let taken = |names: &[&str]| names.iter().map(ToString::to_string).collect();
+        assert_eq!(free_name("hdf", &taken(&[])), "hdf");
         assert_eq!(free_name("hdf", &taken(&["other", "hdf-1"])), "hdf");
         assert_eq!(free_name("hdf", &taken(&["hdf"])), "hdf-1");
         assert_eq!(
@@ -528,7 +525,7 @@ mod tests {
             "hdf-2"
         );
         assert_eq!(free_name("foo-1", &taken(&["foo-1"])), "foo-1-1");
-        assert_eq!(free_name("a", &[]), "a-1");
+        assert_eq!(free_name("a", &taken(&[])), "a-1");
     }
 
     #[test]

@@ -56,7 +56,10 @@ fn parse(content: &str, path: &Path) -> Result<Vec<String>> {
 
 /// Whether `domain`, like `.a.com`, covers `host`, like `a.com`, `x.a.com` or `.x.a.com`
 fn covers(domain: &str, host: &str) -> bool {
-    domain != host && domain.starts_with('.') && (host == &domain[1..] || host.ends_with(domain))
+    domain != host
+        && domain
+            .strip_prefix('.')
+            .is_some_and(|parent| host == parent || host.ends_with(domain))
 }
 
 /// Strict, so nothing else reaches the proxy's config

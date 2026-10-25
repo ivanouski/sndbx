@@ -30,7 +30,8 @@ impl Builder {
 
         let mut names: Vec<String> = std::fs::read_dir(&self.images_dir)
             .with_context(|| format!("can't read {}", self.images_dir.display()))?
-            .filter_map(std::result::Result::ok)
+            // Skips entries that can't be read
+            .flatten()
             .map(|entry| entry.file_name().to_string_lossy().into_owned())
             .filter(|name| name != BASE_NAME && self.is_image_dir(name))
             .collect();

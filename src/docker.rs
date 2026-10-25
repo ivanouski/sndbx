@@ -114,10 +114,9 @@ fn label_filter(image: &str) -> String {
 }
 
 fn containers(ps_args: &[&str]) -> Result<Vec<String>> {
-    let args: Vec<&str> = std::iter::once("ps")
-        .chain(ps_args.iter().copied())
-        .chain(["--format", "{{.Names}}"])
-        .collect();
+    let mut args = vec!["ps"];
+    args.extend(ps_args);
+    args.extend(["--format", "{{.Names}}"]);
     let Some(output) = output(&args) else {
         bail!("failed to list containers");
     };

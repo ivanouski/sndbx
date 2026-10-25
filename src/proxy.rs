@@ -102,13 +102,10 @@ fn write_config(content: &str) -> Result<Config> {
         // In place, as the bind mount keeps a replaced file
         paths::write_file(&path, content)?;
     }
+    let loaded = std::fs::read_to_string(loaded_config_path()).ok();
     Ok(if current.is_none() {
         Config::Created
-    } else if std::fs::read_to_string(loaded_config_path())
-        .ok()
-        .as_deref()
-        == Some(content)
-    {
+    } else if loaded.as_deref() == Some(content) {
         Config::Loaded
     } else {
         Config::Changed

@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
@@ -414,10 +415,10 @@ fn check_removal<'a>(settings: &Settings, name: &'a str, names: &[&str]) -> Resu
 
 /// Removes each tag once and comments out the entries
 fn remove_images(removals: &[Removal]) -> Result<()> {
-    let mut removed: Vec<&str> = Vec::new();
+    let mut removed = HashSet::new();
     for removal in removals {
         let tag = removal.tag.as_str();
-        if !removed.contains(&tag) {
+        if removed.insert(tag) {
             if removal.exists {
                 if !docker::run(&["image", "rm", tag]) {
                     bail!("failed to remove {tag}");
@@ -426,7 +427,6 @@ fn remove_images(removals: &[Removal]) -> Result<()> {
             } else {
                 print_status(&format!("{tag} doesn't exist"));
             }
-            removed.push(tag);
         }
         comment_out(removal.name);
     }
