@@ -6,14 +6,12 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
 RUN apt update && apt upgrade -y && apt install -y --no-install-recommends \
-  curl ca-certificates tzdata git openssh-client jq \
-  build-essential libpq-dev \
-  libglib2.0-0t64 libnspr4 libnss3 libatk1.0-0t64 \
-  libxkbcommon0 libasound2t64 libgbm1 libxcomposite1 libxdamage1 \
-  libxfixes3 libxrandr2 libatspi2.0-0t64 \
-  fonts-liberation fonts-noto-color-emoji tini \
-  pkg-config libyaml-dev zlib1g-dev libffi-dev sqlite3 libsqlite3-dev libvips42t64 \
-  unzip zip less file iproute2 wget ripgrep fd-find \
+  ca-certificates tzdata tini curl wget git openssh-client \
+  jq ripgrep fd-find less file time unzip zip iproute2 sqlite3 \
+  build-essential pkg-config libffi-dev libyaml-dev zlib1g-dev libpq-dev libsqlite3-dev libvips42t64 \
+  libglib2.0-0t64 libnspr4 libnss3 libatk1.0-0t64 libatspi2.0-0t64 libxkbcommon0 \
+  libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2t64 \
+  fonts-liberation fonts-noto-color-emoji \
   && rm -rf /var/lib/apt/lists/* \
   && ln -s /usr/bin/fdfind /usr/local/bin/fd
 
