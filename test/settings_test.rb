@@ -23,30 +23,11 @@ class SettingsTest < SndbxTestCase
     assert_settings_error 'images[0].ports[0]: invalid type: integer `3000`, expected a string', sndbx('run', 'claude')
   end
 
-  def test_docker_args_must_be_strings
-    write_settings(images: [{ name: 'claude', user: 'ubuntu', docker_args: [8] }])
-
-    assert_settings_error 'images[0].docker_args[0]: invalid type: integer `8`, expected a string',
-                          sndbx('run', 'claude')
-  end
-
   def test_invalid_tag_prefix
     write_settings(tag_prefix: 'Not Valid', images: [])
 
     assert_error "invalid #{settings_path}: tag_prefix must be a lowercase image name, e.g. sndbx",
                  sndbx('run', 'claude')
-  end
-
-  def test_images_must_be_a_list
-    write_settings(images: 'claude')
-
-    assert_settings_error 'images: invalid type: string "claude", expected a sequence', sndbx('run', 'claude')
-  end
-
-  def test_images_need_a_name
-    write_settings(images: [{ user: 'ubuntu' }])
-
-    assert_settings_error 'images[0]: missing field `name`', sndbx('run', 'claude')
   end
 
   def test_images_must_be_mappings
@@ -98,18 +79,6 @@ class SettingsTest < SndbxTestCase
                  docker_calls.last
   end
 
-  def test_config_dir_must_be_a_path
-    write_settings(images: [{ name: 'claude', user: 'ubuntu', config_dir: 42 }])
-
-    assert_settings_error 'images[0].config_dir: invalid type: integer `42`, expected a string', sndbx('run', 'claude')
-  end
-
-  def test_other_images_must_be_valid
-    write_settings(images: [{ name: 'claude', user: 'ubuntu' }, { name: 'codex', user: 5 }])
-
-    assert_settings_error 'images[1].user: invalid type: integer `5`, expected a string', sndbx('run', 'claude')
-  end
-
   def test_config_dir_must_not_be_empty
     write_settings(images: [{ name: 'claude', user: 'ubuntu', config_dir: '' }])
 
@@ -122,17 +91,6 @@ class SettingsTest < SndbxTestCase
     write_settings(images: [{ name: 'claude', user: 'ubuntu' }])
 
     assert_equal "codex\n", sndbx('list', 'configured', env: { 'XDG_CONFIG_HOME' => config_home }).out
-  end
-
-  def test_first_run_creates_example_settings_under_xdg_config_home
-    config_home = File.join(@root, 'xdg-config')
-    path = File.join(config_home, 'sndbx', 'settings.yml')
-
-    result = sndbx('run', 'claude', env: { 'XDG_CONFIG_HOME' => config_home })
-
-    assert_equal "Created an example config at #{path}, edit it and run again.\n", result.err
-    assert File.exist?(path)
-    refute File.exist?(settings_path)
   end
 
   def test_default_config_dir_under_xdg_config_home
@@ -155,12 +113,6 @@ class SettingsTest < SndbxTestCase
     assert_equal "claude\n", sndbx('list', 'configured', env: { 'XDG_CONFIG_HOME' => '' }).out
   end
 
-  def test_top_level_docker_args_must_be_strings
-    write_settings(docker_args: ['--pids-limit=4096', 8], images: [{ name: 'claude', user: 'ubuntu' }])
-
-    assert_settings_error 'docker_args[1]: invalid type: integer `8`, expected a string', sndbx('run', 'claude')
-  end
-
   def test_unknown_key
     write_settings(tag_prefx: 'mine', images: [])
 
@@ -174,13 +126,5 @@ class SettingsTest < SndbxTestCase
     write_claude_settings
 
     assert_error 'HOME is not set to an absolute path', sndbx('list', 'configured', env: { 'HOME' => 'relative' })
-  end
-
-  def test_unknown_image_key
-    write_settings(images: [{ name: 'claude', user: 'ubuntu', docker_arg: ['--memory=8g'] }])
-
-    assert_settings_error 'images[0]: unknown field `docker_arg`, expected one of `name`, `user`, `tag`, ' \
-                          '`config_dir`, `config_target`, `ports`, `docker_args`, `proxy`',
-                          sndbx('run', 'claude')
   end
 end

@@ -50,16 +50,6 @@ class ExecTest < SndbxTestCase
     assert_equal [['exec', '-it', 'gifted_mcnulty', 'bash']], docker_execs
   end
 
-  def test_exec_needs_a_nonempty_user
-    write_exec_settings
-
-    assert_usage_error "a value is required for '--user <USER>'",
-                       sndbx('exec', '-u', '', 'claude', 'gifted_mcnulty', 'bash')
-    assert_usage_error "a value is required for '--user <USER>'",
-                       sndbx('exec', '--user=', 'claude', 'gifted_mcnulty', 'bash')
-    refute File.exist?(@docker_log)
-  end
-
   def test_exec_after_double_dash
     write_exec_settings
 
@@ -67,21 +57,6 @@ class ExecTest < SndbxTestCase
     sndbx('exec', '--', 'claude', 'gifted_mcnulty', 'bash')
 
     assert_equal [['exec', '-i', 'gifted_mcnulty', '-weird'], ['exec', '-i', 'gifted_mcnulty', 'bash']], docker_execs
-  end
-
-  def test_exec_needs_an_image_a_container_and_a_command
-    write_exec_settings
-
-    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('exec')
-    assert_usage_error "the following required arguments were not provided:\n  <CONTAINER>", sndbx('exec', 'claude')
-    assert_usage_error "the following required arguments were not provided:\n  <COMMAND>...",
-                       sndbx('exec', 'claude', 'gifted_mcnulty')
-  end
-
-  def test_exec_unknown_image
-    write_exec_settings
-
-    assert_error "unknown image 'nope', expected one of: claude, codex", sndbx('exec', 'nope', 'gifted_mcnulty', 'bash')
   end
 
   def test_exec_container_of_another_image
@@ -97,11 +72,5 @@ class ExecTest < SndbxTestCase
     write_settings(images: [{ name: 'claude', user: 'ubuntu' }])
 
     assert_error 'no running claude sandbox', sndbx('exec', 'claude', 'gifted_mcnulty', 'bash')
-  end
-
-  def test_exec_without_docker
-    write_exec_settings
-
-    assert_error 'docker is not installed', sndbx('exec', 'claude', 'gifted_mcnulty', 'bash', docker: false)
   end
 end

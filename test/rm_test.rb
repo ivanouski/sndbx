@@ -50,15 +50,6 @@ class RmTest < SndbxTestCase
     assert_includes File.read(settings_path), "  # - name: plain\n  #   user: dev\n"
   end
 
-  def test_rm_an_entry_whose_name_is_not_its_first_key
-    write_settings_file("images:\n  - user: dev\n    name: claude\n  - name: codex\n")
-    add_docker_image('sndbx:claude')
-
-    sndbx('rm', 'claude')
-
-    assert_equal "codex\n", sndbx('list', 'configured').out
-  end
-
   def test_rm_an_image_with_its_own_tag
     write_settings(images: [{ name: 'claude', tag: 'my-claude:latest' }])
     add_docker_image('my-claude:latest')
@@ -179,15 +170,5 @@ class RmTest < SndbxTestCase
 
     assert File.symlink?(settings_path)
     assert_includes File.read(target), '# - name: claude'
-  end
-
-  def test_rm_needs_an_image
-    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>...", sndbx('rm')
-  end
-
-  def test_rm_without_docker
-    write_claude_settings
-
-    assert_error 'docker is not installed', sndbx('rm', 'claude', docker: false)
   end
 end

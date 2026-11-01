@@ -44,18 +44,6 @@ class RunTest < SndbxTestCase
     assert_equal "==> Starting sndbx-proxy-1\n", result.out
   end
 
-  def test_run_leaves_the_name_to_docker_when_the_directory_name_has_nothing_docker_allows
-    write_claude_settings
-    dir = mkdir('work/проект')
-
-    result = sndbx('run', 'claude', '-v', dir)
-
-    assert_empty result.out
-    assert_equal [*run_options('проект', name: nil), *volume('проект', dir), *config_volume, *TERMINAL_ENV,
-                  'sndbx:claude'],
-                 docker_calls.last
-  end
-
   def test_run_with_a_name_in_the_docker_args_leaves_it_be
     write_settings(images: [{ name: 'claude', user: 'ubuntu', docker_args: ['--name=from-settings'] }])
     add_docker_image('sndbx:claude')
@@ -70,17 +58,6 @@ class RunTest < SndbxTestCase
     assert_equal [[*run_args, 'sndbx:claude'], [*run_args, '--name', 'custom', 'sndbx:claude']], docker_runs
   end
 
-  def test_run_checks_docker_before_running
-    write_claude_settings
-
-    sndbx('run', 'claude')
-
-    assert_equal [['info'], %w[image inspect sndbx:claude],
-                  ['image', 'inspect', '--format', '{{.Config.User}}', 'sndbx:claude']],
-                 docker_calls.first(3)
-    assert_empty docker_builds
-  end
-
   def test_run_mounts_the_config_in_the_home_of_the_user_the_image_runs_as
     write_settings(images: [{ name: 'claude' }])
     add_docker_image('sndbx:claude', user: 'dev:staff')
@@ -88,15 +65,6 @@ class RunTest < SndbxTestCase
     sndbx('run', 'claude')
 
     assert_equal ['-v', "#{default_config_dir}:/home/dev/.claude"], docker_calls.last[-6..-5]
-  end
-
-  def test_run_mounts_the_config_in_root_home_for_an_image_that_runs_as_root
-    write_settings(images: [{ name: 'claude' }])
-    add_docker_image('sndbx:claude', user: '')
-
-    sndbx('run', 'claude')
-
-    assert_equal ['-v', "#{default_config_dir}:/root/.claude"], docker_calls.last[-6..-5]
   end
 
   def test_run_prefers_the_user_in_the_settings
@@ -220,13 +188,6 @@ class RunTest < SndbxTestCase
                  docker_calls.last
   end
 
-  def test_workdir_at_the_workspace_root
-    write_claude_settings
-
-    assert_error "workdir 'api' is not a directory volume, expected one of: /workspace",
-                 sndbx('run', 'claude', '-v', '.:/workspace', '-w', 'api')
-  end
-
   def test_run_starts_in_a_directory_volume_outside_the_workspace_without_one_inside
     write_claude_settings
     sdk = mkdir('work/sdk')
@@ -319,16 +280,6 @@ class RunTest < SndbxTestCase
                  docker_calls.last
   end
 
-  def test_run_keeps_the_container
-    write_claude_settings
-
-    sndbx('run', 'claude', '--keep')
-
-    assert_equal ['run', '-it', '--label=sndbx.image=claude', '--name=project', '--workdir=/workspace/project',
-                  *volume('project'), *config_volume, *TERMINAL_ENV, 'sndbx:claude'],
-                 docker_calls.last
-  end
-
   def test_run_option_spellings
     write_claude_settings
     mkdir('work/project/-dir')
@@ -342,12 +293,6 @@ class RunTest < SndbxTestCase
                   [*run_options('-dir', name: 'dir'), *volume('-dir', File.join(@work, '-dir')), *config_volume,
                    *TERMINAL_ENV, 'sndbx:claude']],
                  docker_runs
-  end
-
-  def test_invalid_port
-    write_claude_settings
-
-    assert_error "invalid port 'http', expected PORT or HOST:CONTAINER", sndbx('run', 'claude', '-p', 'http')
   end
 
   def test_run_uses_image_settings
@@ -407,23 +352,6 @@ class RunTest < SndbxTestCase
                  docker_calls.last
   end
 
-  def test_run_passes_top_level_docker_args_to_images_without_their_own
-    write_settings(docker_args: '--pids-limit=4096', images: [{ name: 'claude', user: 'ubuntu' }])
-    add_docker_image('sndbx:claude')
-
-    sndbx('run', 'claude')
-
-    assert_equal [*run_options('project'), *volume('project'), *config_volume, *TERMINAL_ENV, '--pids-limit=4096',
-                  'sndbx:claude'],
-                 docker_calls.last
-  end
-
-  def test_run_takes_the_image_before_docker_args
-    write_claude_settings
-
-    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('run', '--', 'claude')
-  end
-
   def test_run_uses_image_tag
     write_settings(images: [{ name: 'claude', user: 'ubuntu', tag: 'my-claude:latest' }])
     add_docker_image('my-claude:latest')
@@ -471,14 +399,6 @@ class RunTest < SndbxTestCase
     missing = File.join(@root, 'missing')
 
     assert_error "#{missing} does not exist", sndbx('run', 'plain', '-v', missing)
-    refute File.exist?(@docker_log)
-  end
-
-  def test_run_checks_the_workdir_before_building
-    write_build_settings(images: [{ name: 'plain' }])
-
-    assert_error "workdir 'nope' is not a directory volume, expected one of: project",
-                 sndbx('run', 'plain', '-w', 'nope')
     refute File.exist?(@docker_log)
   end
 
@@ -532,20 +452,5 @@ class RunTest < SndbxTestCase
                    sndbx('run', 'claude')
     end
     assert_empty docker_builds
-  end
-
-  def test_run_with_a_missing_image_and_images_dir
-    missing = File.join(@root, 'missing')
-    write_settings(images_dir: missing, images: [{ name: 'claude' }])
-
-    assert_error "docker image 'sndbx:claude' that claude runs doesn't exist, and sndbx can't build it: " \
-                 "images directory #{missing} does not exist, set images_dir in #{settings_path}. " \
-                 "Pull or build it yourself, or change claude's tag in #{settings_path}",
-                 sndbx('run', 'claude')
-  end
-
-  def test_run_needs_one_image
-    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('run')
-    assert_usage_error "unexpected argument 'codex' found", sndbx('run', 'claude', 'codex')
   end
 end

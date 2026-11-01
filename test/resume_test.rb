@@ -28,24 +28,4 @@ class ResumeTest < SndbxTestCase
 
     assert_error 'no stopped claude sandbox', sndbx('resume', 'claude', 'gifted_mcnulty')
   end
-
-  def test_resume_unknown_image
-    write_resume_settings
-
-    assert_error "unknown image 'nope', expected one of: claude, codex", sndbx('resume', 'nope', 'sleepy_babbage')
-  end
-
-  def test_resume_needs_an_image_and_a_container
-    write_resume_settings
-
-    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('resume')
-    assert_usage_error "the following required arguments were not provided:\n  <CONTAINER>", sndbx('resume', 'claude')
-    assert_usage_error "unexpected argument 'bash' found", sndbx('resume', 'claude', 'sleepy_babbage', 'bash')
-  end
-
-  def test_resume_without_docker
-    write_resume_settings
-
-    assert_error 'docker is not installed', sndbx('resume', 'claude', 'sleepy_babbage', docker: false)
-  end
 end

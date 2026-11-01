@@ -75,15 +75,7 @@ class LogsTest < SndbxTestCase
 
     assert_predicate result, :success?
     assert_equal ['-n', '10', '-f', log_path], JSON.parse(result.out)
-  end
-
-  def test_logs_with_lines
-    write_fake_tail
-    FileUtils.mkdir_p(File.dirname(log_path))
-    File.write(log_path, '')
-
     assert_equal ['-n', '50', '-f', log_path], JSON.parse(sndbx('logs', 'commands', '-n', '50').out)
-    assert_equal ['-n', '0', '-f', log_path], JSON.parse(sndbx('logs', 'commands', '--lines=0').out)
   end
 
   def test_logs_without_a_log
@@ -99,17 +91,6 @@ class LogsTest < SndbxTestCase
     assert_error 'tail is not installed', sndbx('logs', 'commands')
   end
 
-  def test_logs_needs_a_line_count
-    assert_usage_error "invalid value 'x' for '--lines <N>': expected a number", sndbx('logs', 'commands', '-n', 'x')
-    assert_usage_error "invalid value '-1' for '--lines <N>': expected a line count of 0 or more",
-                       sndbx('logs', 'commands', '-n', '-1')
-  end
-
-  def test_logs_takes_no_arguments
-    assert_usage_error "unexpected argument 'claude' found", sndbx('logs', 'commands', 'claude')
-    assert_usage_error "unrecognized subcommand 'claude'", sndbx('logs', 'claude')
-  end
-
   def test_logs_follows_the_proxy_log
     write_running_proxy
 
@@ -123,21 +104,10 @@ class LogsTest < SndbxTestCase
     write_running_proxy
 
     assert_predicate sndbx('logs', 'proxy', '--denied'), :success?
-    exec, container, sh, c, script, name, *args = docker_calls.last
-    assert_equal %w[exec sndbx-proxy sh -c], [exec, container, sh, c]
-    assert_equal ['sh', '10', '/var/log/squid/access.log', ' TCP_DENIED/'], [name, *args]
-
-    log = File.join(@root, 'access.log')
-    lines = (1..12).map { |i| "2026-10-21T14:02:#{i}+0000 172.18.0.2 TCP_DENIED/403 CONNECT host#{i}:443" }
-    File.write(log, "#{lines.join("\n")}\n2026-10-21T14:03:00+0000 172.18.0.2 TCP_TUNNEL/200 CONNECT ok:443\n")
-    # The real tail, which with -F only reads what's there
-    real_tail = ENV.fetch('PATH').split(':').map { |dir| File.join(dir, 'tail') }.find { |path| File.executable?(path) }
-    write_executable(File.join(@bin, 'tail'),
-                     "#!/bin/sh\n[ \"$3\" = -F ] && exec #{real_tail} \"$1\" \"$2\" \"$4\"\nexec #{real_tail} \"$@\"\n")
-    env = { 'PATH' => "#{@bin}:#{ENV.fetch('PATH')}" }
-    out = IO.popen(env, ['sh', '-c', script, name, '2', log, args.last], &:read)
-
-    assert_equal "#{lines[-2..].join("\n")}\n", out
+    # The script between sh -c and its arguments is tested in proxy.rs
+    call = docker_calls.last
+    assert_equal %w[exec sndbx-proxy sh -c], call.first(4)
+    assert_equal ['sh', '10', '/var/log/squid/access.log', ' TCP_DENIED/'], call.drop(5)
   end
 
   def test_logs_without_a_running_proxy

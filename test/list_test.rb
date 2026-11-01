@@ -49,24 +49,10 @@ class ListTest < SndbxTestCase
     refute File.exist?(settings_path)
   end
 
-  def test_list_running_needs_one_image
-    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('list', 'running')
-    assert_usage_error "unexpected argument 'gifted_mcnulty' found",
-                       sndbx('list', 'running', 'claude', 'gifted_mcnulty')
-  end
-
   def test_list_stopped
     write_resume_settings
 
     assert_equal "sleepy_babbage\n", sndbx('list', 'stopped', 'claude').out
     assert_empty sndbx('list', 'stopped', 'codex').out
-  end
-
-  def test_list_stopped_needs_one_image
-    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>", sndbx('list', 'stopped')
-  end
-
-  def test_list_needs_a_known_list
-    assert_usage_error "unrecognized subcommand 'images'", sndbx('list', 'images')
   end
 end

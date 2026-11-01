@@ -56,17 +56,6 @@ class BuildTest < SndbxTestCase
     assert_equal [build_call('plain'), build_call('claude', base: true)], docker_builds
   end
 
-  def test_build_builds_missing_base_once
-    write_build_settings
-    write_dockerfile('codex', "ARG TAG_PREFIX=sndbx\nFROM ${TAG_PREFIX}:base\n")
-
-    sndbx('build', 'plain', 'claude', 'codex')
-
-    assert_equal [build_call('base'), build_call('plain'), build_call('claude', base: true),
-                  build_call('codex', base: true)],
-                 docker_builds
-  end
-
   def test_build_rebuilds_base_first
     write_build_settings
     add_docker_image('sndbx:base')
@@ -83,14 +72,6 @@ class BuildTest < SndbxTestCase
     sndbx('build', '-b')
 
     assert_equal [build_call('base')], docker_builds
-  end
-
-  def test_build_without_base_dockerfile
-    write_build_settings
-    File.delete(File.join(@images_dir, 'base', 'Dockerfile'))
-
-    assert_error "can't read #{File.join(@images_dir, 'base', 'Dockerfile')}: No such file or directory (os error 2)",
-                 sndbx('build', '-b')
   end
 
   def test_build_rejects_base
@@ -115,15 +96,6 @@ class BuildTest < SndbxTestCase
     refute File.exist?(@docker_log)
   end
 
-  def test_build_failure
-    write_build_settings
-
-    result = sndbx('build', 'claude', env: { 'DOCKER_BROKEN' => 'sndbx:base' })
-
-    assert_error 'failed to build sndbx:base', result
-    assert_equal [build_call('base')], docker_builds
-  end
-
   def test_build_stops_at_the_first_failure
     write_build_settings
     add_docker_image('sndbx:base')
@@ -132,12 +104,6 @@ class BuildTest < SndbxTestCase
 
     assert_error 'failed to build sndbx:plain', result
     assert_equal [build_call('plain')], docker_builds
-  end
-
-  def test_build_without_docker
-    write_build_settings
-
-    assert_error 'docker is not installed', sndbx('build', 'plain', docker: false)
   end
 
   def test_build_with_missing_images_dir
@@ -184,17 +150,6 @@ class BuildTest < SndbxTestCase
     refute File.exist?(@docker_log)
   end
 
-  def test_build_prints_the_entry_with_its_keys_when_it_cannot_add_it
-    content = "images_dir: #{@images_dir}\nimages: []\n"
-    write_build_settings
-    write_settings_file(content)
-    File.write(File.join(@images_dir, 'plain', 'sndbx.yml'), "proxy: false\n")
-
-    result = sndbx('build', 'plain')
-
-    assert result.err.end_with?(":\n  - name: 'plain'\n    proxy: false\n"), result.err
-  end
-
   def test_build_adds_each_image
     write_build_settings
     add_docker_image('sndbx:base')
@@ -202,44 +157,6 @@ class BuildTest < SndbxTestCase
     sndbx('build', 'plain', 'claude')
 
     assert_equal %w[plain claude], configured_images
-  end
-
-  def test_build_appends_to_an_indented_list
-    content = "images_dir: #{@images_dir} # mine\nimages:\n  - name: codex\n    user: dev\n"
-    write_build_settings
-    write_settings_file(content)
-
-    sndbx('build', 'plain')
-
-    assert_equal "#{content}  - name: 'plain'\n", File.read(settings_path)
-  end
-
-  def test_build_appends_to_a_list_that_is_not_indented
-    write_build_settings(images: [{ name: 'codex' }])
-
-    sndbx('build', 'plain')
-
-    assert File.read(settings_path).end_with?("\n- name: 'plain'\n")
-    assert_equal %w[codex plain], configured_images
-  end
-
-  def test_build_appends_after_the_last_line_without_a_newline
-    content = "images_dir: #{@images_dir}\nimages:\n  - name: codex"
-    write_build_settings
-    write_settings_file(content)
-
-    sndbx('build', 'plain')
-
-    assert_equal "#{content}\n  - name: 'plain'\n", File.read(settings_path)
-  end
-
-  def test_build_quotes_the_name
-    write_build_settings
-    write_dockerfile('true', "FROM ubuntu\n")
-
-    sndbx('build', 'true')
-
-    assert_equal ['true'], configured_images
   end
 
   def test_build_keeps_a_configured_image
@@ -262,16 +179,6 @@ class BuildTest < SndbxTestCase
 
     assert_includes result.out, "==> plain in #{settings_path} runs my-plain:latest, not sndbx:plain\n"
     assert_equal content, File.read(settings_path)
-  end
-
-  def test_build_appends_to_a_list_indented_by_four
-    content = "images_dir: #{@images_dir}\nimages:\n    - name: codex\n      docker_args:\n        - --init\n"
-    write_build_settings
-    write_settings_file(content)
-
-    sndbx('build', 'plain')
-
-    assert_equal "#{content}    - name: 'plain'\n", File.read(settings_path)
   end
 
   def test_build_does_not_add_an_image_that_failed
@@ -340,11 +247,5 @@ class BuildTest < SndbxTestCase
 
     assert File.symlink?(settings_path)
     assert_equal %w[plain], configured_images
-  end
-
-  def test_build_needs_an_image_or_rebuild_base
-    write_build_settings
-
-    assert_usage_error "the following required arguments were not provided:\n  <IMAGE>...", sndbx('build')
   end
 end

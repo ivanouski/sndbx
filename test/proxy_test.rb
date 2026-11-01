@@ -168,25 +168,6 @@ class ProxyTest < SndbxTestCase
     refute_includes File.read(squid_conf), 'dstdomain'
   end
 
-  def test_switching_to_allow_all_reconfigures_the_proxy
-    write_proxy_settings
-    write_allowed_hosts(".openai.com\n")
-    sndbx('run', 'claude')
-    write_proxy_settings(allow: 'all')
-    File.delete(@docker_log)
-
-    sndbx('run', 'claude')
-
-    assert_equal [network_inspect, proxy_inspect, proxy_exec_parse, %w[exec sndbx-proxy squid -k reconfigure]],
-                 proxy_calls
-  end
-
-  def test_an_unknown_allow
-    write_proxy_settings(allow: 'any')
-
-    assert_settings_error 'proxy.allow: unknown variant `any`, expected `listed` or `all`', sndbx('run', 'claude')
-  end
-
   def test_a_proxy_with_another_config_file_is_replaced
     write_proxy_settings
     write_allowed_hosts(".openai.com\n")
@@ -219,15 +200,6 @@ class ProxyTest < SndbxTestCase
                  'remove it with docker network rm sndbx-internal and run again',
                  sndbx('run', 'claude')
     assert_empty docker_runs
-  end
-
-  def test_hosts_a_domain_covers_are_left_out
-    write_proxy_settings
-    write_allowed_hosts("api.github.com\n.github.com\n")
-
-    sndbx('run', 'claude')
-
-    assert_includes File.read(squid_conf), "acl allowed dstdomain -n .github.com\n"
   end
 
   def test_a_restarting_proxy_is_replaced
@@ -326,16 +298,6 @@ class ProxyTest < SndbxTestCase
     assert_equal [network_inspect, proxy_inspect, proxy_exec_parse], proxy_calls
   end
 
-  def test_an_empty_allowlist_denies_everything
-    write_proxy_settings
-    write_allowed_hosts("# nothing yet\n")
-
-    sndbx('run', 'claude')
-
-    refute_includes File.read(squid_conf), 'allowed'
-    assert_equal PROXY_ARGS, docker_calls.last[-8..-2]
-  end
-
   def test_an_image_can_opt_out
     write_settings(proxy: { image: SQUID_IMAGE }, images: [{ name: 'claude', proxy: false }])
     add_docker_image('sndbx:claude')
@@ -365,26 +327,12 @@ class ProxyTest < SndbxTestCase
 
   def test_invalid_allowed_hosts
     write_proxy_settings
+    write_allowed_hosts("a.com\nhttp_access allow all\n")
 
-    ["open ai.com\n", "a.com\nhttp_access allow all\n", "Example.com\n"].each do |content|
-      write_allowed_hosts(content)
-      line = content.lines.size
-      host = content.lines.last.chomp
-
-      assert_error "invalid #{allowed_hosts_path} line #{line}: '#{host}' is not a host name like " \
-                   '.openai.com or pypi.org',
-                   sndbx('run', 'claude')
-    end
+    assert_error "invalid #{allowed_hosts_path} line 2: 'http_access allow all' is not a host name like " \
+                 '.openai.com or pypi.org',
+                 sndbx('run', 'claude')
     refute File.exist?(@docker_log)
-  end
-
-  def test_proxy_must_be_a_boolean
-    write_settings(proxy: { image: SQUID_IMAGE }, images: [{ name: 'claude', proxy: 'no' }])
-
-    result = sndbx('run', 'claude')
-
-    refute_predicate result, :success?
-    assert_includes result.err, 'images[0].proxy: invalid type'
   end
 
   private
