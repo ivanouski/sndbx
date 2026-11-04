@@ -1,101 +1,42 @@
 # sndbx
 
-A lightweight sandbox for coding agents: one small binary that runs an agent's docker image as a container with your project mounted and the agent's config kept between runs. It has no daemon, VM or runtime of its own: sndbx puts together a `docker run`, logs it and runs it.
+A lightweight sandbox for coding agents: one binary that runs an agent's docker image with your project mounted and its config kept between runs. No daemon, VM or runtime; it puts together a `docker run`, logs it and runs it.
 
-- **Just docker:** every sandbox is a plain container, so `docker ps`, `docker logs` and `docker exec` work on it. `sndbx logs commands` shows each docker command sndbx ran, and you can run one by hand, see [Run without sndbx](#run-without-sndbx).
-- **Small:** a single Rust binary with five dependencies, configured by one YAML file.
-- **Any image:** an entry in the settings is a name and a tag; sndbx mounts the workspace and the config directory and passes your `docker_args` through.
-- **Optional egress control:** a squid proxy limits sandboxes to the hosts you list, or lets every host through so you can watch what they reach.
+- **Just docker:** sandboxes are plain containers, so `docker ps`, `logs` and `exec` work. `sndbx logs commands` shows what sndbx ran, so you can [run it yourself](#run-without-sndbx).
+- **Small:** one Rust binary, five dependencies, one YAML file.
+- **Any image:** an entry is a name and an optional tag.
+- **Optional egress control:** a squid proxy limits sandboxes to the hosts you list, or logs everything they reach.
 
-As a bonus, the repo comes with Dockerfiles for Claude Code, opencode, Codex, Cursor and dsh that `sndbx build` builds, see [Images](#images).
+The repo has Dockerfiles for Claude Code, opencode, Codex, Cursor and dsh, see [Images](#images).
 
 ## Install
 
-Download the binary for your platform from the [latest release](https://github.com/ivanouski/sndbx/releases/latest) into `~/.local/bin`, or another directory in `PATH`:
+Download the binary for your platform from the [latest release](https://github.com/ivanouski/sndbx/releases/latest) into a directory in `PATH`:
 
 ```sh
 asset=sndbx-macos   # or sndbx-linux-x86_64, sndbx-linux-arm64
 curl -fL --create-dirs -o ~/.local/bin/sndbx "https://github.com/ivanouski/sndbx/releases/latest/download/$asset" && chmod +x ~/.local/bin/sndbx
 ```
 
-`sndbx build` builds the images from this repo's `images/`, so to use it, clone the repo and set `images_dir` in the settings, see [Configure](#configure).
+To build the images with `sndbx build`, clone this repo and set `images_dir` to its `images/` in the settings, see [Configure](#configure).
 
-Or build and install `sndbx` into `~/.cargo/bin` from a clone with a recent Rust toolchain, e.g. [mise](https://mise.jdx.dev)'s:
+Or build sndbx from a clone with a recent Rust toolchain, e.g. [mise](https://mise.jdx.dev)'s. It installs into `~/.cargo/bin` and finds `images/` without any setting:
 
 ```sh
 cargo install --path .
 ```
 
-Optionally, install the bash completion (bash 4.0+). It completes arguments after `--` with docker's own completion.
+Optionally, install shell completion. Arguments after `--` complete with docker's completion; for zsh, if docker's is installed.
 
 ```sh
-cp completions/bash/sndbx ~/.local/share/bash-completion/completions/sndbx   # with bash-completion
-# or source completions/bash/sndbx in ~/.bashrc
+# bash 4.0+, with bash-completion
+cp completions/bash/sndbx ~/.local/share/bash-completion/completions/sndbx
+# or, without it, in ~/.bashrc
+source ~/src/sndbx/completions/bash/sndbx
+
+# zsh, in ~/.zshrc before compinit, or copy completions/zsh/_sndbx to a directory in fpath
+fpath=(~/src/sndbx/completions/zsh $fpath)
 ```
-
-Or the zsh completion. It completes arguments after `--` with docker's zsh completion if it's installed.
-
-```sh
-fpath=(~/src/sndbx/completions/zsh $fpath)   # in ~/.zshrc before compinit, or copy completions/zsh/_sndbx to a directory in fpath
-```
-
-## Configure
-
-Settings live in `~/.config/sndbx/settings.yml` (`$XDG_CONFIG_HOME/sndbx/` if set). `run` creates an example when there's none, and `build` creates it with the image it built. Relative paths resolve against the settings directory. Unknown keys are an error, so typos don't go unnoticed.
-
-```yaml
-tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
-images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to this repo's images/
-docker_args: ["--security-opt=no-new-privileges", "--pids-limit=4096"] # optional, docker run arguments for every image
-proxy: # optional, turns the proxy on
-  image: ubuntu/squid@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
-  allow: listed # optional, the hosts in allowed_hosts; all lets every host through
-images:
-  - name: claude
-    tag: my-claude:latest # optional, defaults to <tag_prefix>:<name>
-    user: ubuntu # optional, defaults to the user the image runs as
-    config_dir: ~/.claude_docker # optional, defaults to ~/.config/sndbx/<name>
-    config_target: .claude # optional, relative to the user's home, defaults to .<name>
-    docker_args: ["--memory=8g"] # optional, after the top-level ones
-  - name: opencode
-    config_target: .config/opencode
-    docker_args: ["--add-host=host.docker.internal:host-gateway"]
-  - name: codex
-  - name: dsh
-    ports: ["127.0.0.1:3080:3080"] # optional, always published; quote them
-    proxy: false # optional, keeps the image on the open network when proxy is set
-```
-
-To limit where sandboxes can connect, set `proxy` and list the allowed hosts in `~/.config/sndbx/allowed_hosts`, one per line. A leading `.` also allows subdomains:
-
-```
-# models
-.openai.com
-.chatgpt.com
-.anthropic.com
-.claude.ai
-.claude.com
-.cursor.com
-.cursor.sh
-
-# code and packages
-.github.com
-.githubusercontent.com
-.npmjs.org
-.pypi.org
-.pythonhosted.org
-.rubygems.org
-.crates.io
-```
-
-- **Hardening:** `no-new-privileges` stops processes from gaining privileges through setuid binaries like `su` or `sudo`, so the agent stays unprivileged; `sndbx exec -u root` still works. `--pids-limit` caps processes and threads, so a fork bomb fails in the sandbox, not on the host. Node, cargo and Chromium use many threads: raise it if builds fail with "Resource temporarily unavailable".
-- **Network:** with `proxy` set, sandboxes run on the internal docker network `sndbx-internal`, which has no route out, and reach the network only through `sndbx-proxy`, a squid container from `proxy.image`. It lets through HTTP on port 80 and HTTPS on port 443, to the hosts in `allowed_hosts`, where an empty file denies everything and a missing one is an error, or with `allow: all` to every host but link-local ones like `169.254.169.254`, to watch the traffic without limiting it; the docker host and the local network stay reachable. `run` starts the proxy and the network when they aren't there and sets `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`, tools that ignore them can't connect. Changes apply on the next `run`. Pin the image by digest, which `docker image inspect ubuntu/squid --format '{{index .RepoDigests 0}}'` prints.
-  - **Logs:** `sndbx logs proxy` follows what gets through or denied, `--denied` only the denied requests, like the hosts to add. A line has the time, the sandbox's address, the result and status, the method, the URL, the milliseconds and the bytes sent and received. HTTPS shows only the host, and squid writes the line when the connection closes, so one a tool keeps open shows up late. The log goes with the proxy container. `run` checks the config with squid before loading it and shows squid's errors when it can't use it; `docker logs sndbx-proxy` shows why it doesn't start otherwise.
-  - **Limits:** an image with `ports` or another `--network` needs `proxy: false`, docker allows neither on an internal network. An agent can still send data out through an allowed host, like a GitHub gist. All proxied sandboxes on a docker host share the one proxy, with the settings of the latest `run`.
-  - **Remove** it with `docker rm -f -v sndbx-proxy && docker network rm sndbx-internal`.
-- **`docker_args` order:** top-level first, then the image's, then `run -- ...`. For a flag that takes one value, like `--memory`, the last one wins; flags like `-e` or `--cap-add` add up.
-- **`user`** is only needed when the image runs as a numeric uid, whose home sndbx can't tell.
-- **`images_dir`** defaults to the repo the binary was built from. Set it if the repo moved or the binary was built elsewhere.
 
 ## Use
 
@@ -109,39 +50,84 @@ sndbx run claude -p 3000 -p 8080:80                   # publish ports, 3000 mean
 sndbx run claude -k                                   # keep the container after it exits, for resume
 sndbx run claude -- --memory=8g -e FOO=bar            # pass extra arguments to docker run
 sndbx exec claude my-project bash                     # run a command in a running sandbox
-sndbx exec -u root claude my-project bash             # as root
 sndbx resume claude my-project-1                      # restart a stopped sandbox
 sndbx list configured                                 # image names in the settings
 sndbx list buildable                                  # image names build accepts
-sndbx list running claude                             # claude's running sandboxes
-sndbx list stopped claude                             # claude's stopped sandboxes
-sndbx logs commands                                   # follow the log of the docker commands sndbx ran
-sndbx logs commands -n 50                             # start with the last 50 lines
-sndbx logs proxy                                      # follow the requests the proxy let through or denied
-sndbx logs proxy --denied                             # only the denied ones
+sndbx list running claude                             # claude's sandboxes; stopped for the stopped ones
+sndbx logs commands                                   # follow the docker commands sndbx ran
+sndbx logs proxy                                      # follow the proxy's requests
 ```
 
-`sndbx run`:
+`sndbx run` also:
 
-- builds the image first if it doesn't exist and `images_dir` has a Dockerfile for its tag, `<tag_prefix>:<dir>` from `images_dir/<dir>`; pull or build any other image yourself
-- mounts each `-v SRC[:DST[:OPTS]]` like `docker run -v`, at `/workspace/<basename>` when there's no `DST`
-- mounts the current directory at `/workspace/<basename>` unless a volume is mounted in `/workspace`
-- mounts the image's config directory at `/home/<user>/<config_target>`, where `<user>` is the one the image runs as, or `/root/<config_target>` for root
-- publishes the image's `ports` plus each `-p PORT`
-- passes `COLORTERM`, `TERM_PROGRAM` and `TERM_PROGRAM_VERSION` through from the host, so tools in it see the terminal's colors and features
-- passes the top-level `docker_args`, then the image's, then everything after `--` to `docker run`
+- builds the image if it's missing and `images_dir` has a Dockerfile for it; pull or build other images yourself
+- mounts `-v` paths without a destination, and the current directory, at `/workspace/<basename>`
+- mounts the image's config directory at `<config_target>` in the container user's home
+- passes `COLORTERM`, `TERM_PROGRAM` and `TERM_PROGRAM_VERSION` from the host
 - labels the container `sndbx.image=<name>`, which `exec`, `resume` and `list` find it by
-- names the container after the host directory it starts in, `my-project` for `~/src/my-project`, or `my-project-1`, `my-project-2`, … when a container, running or not, already has the name; each run of other characters than letters, digits, `_` and `-`, dots included, becomes a single `-`, dropped at the ends, and a directory with none of those leaves the name to docker; `sndbx-proxy` is reserved for the proxy; `-- --name=<name>` names it yourself
-- with `proxy` set, runs it on `sndbx-internal` behind `sndbx-proxy`, unless the image has `proxy: false`, see **Network** above
+- names the container after the starting directory, `my-project`, then `my-project-1`, … Other characters than letters, digits, `_` and `-` become `-`. Override with `-- --name=<name>`.
 
-**On Linux**, bind mounts keep the host's owners, so `sndbx build` builds `sndbx:base` with your uid and gid, and the images on it run as you and can write to their config directory and the mounted projects. As root, base keeps the image's uid 1000. A rootless or userns-remapped docker runs the container's users as other ids on the host, so base keeps uid 1000 there too, and its images can't write to the mounts; sndbx doesn't handle that. An image not built on base runs as whoever its Dockerfile says; grant that uid access with ACLs, here 1000:
+Docker commands are logged to `~/.local/state/sndbx/sndbx.log` (`$XDG_STATE_HOME/sndbx/` if set).
 
-```sh
-setfacl -m u:1000:rwx,d:u:1000:rwx ~/.config/sndbx/claude
-setfacl -R -m u:1000:rwX,d:u:1000:rwX ~/src/my-project
+## Configure
+
+Settings live in `~/.config/sndbx/settings.yml` (`$XDG_CONFIG_HOME/sndbx/` if set). `run` creates an example, and `build` adds the images it builds. Relative paths resolve against the settings directory. Unknown keys are an error.
+
+```yaml
+tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
+images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to this repo's images/
+docker_args: ["--security-opt=no-new-privileges", "--pids-limit=4096"] # optional, docker run arguments for every image
+proxy: # optional, turns the proxy on
+  image: ubuntu/squid@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
+  allow: listed # optional, the hosts in allowed_hosts; all lets every host through
+images:
+  - name: claude
+    tag: my-claude:latest # optional, defaults to <tag_prefix>:<name>
+    user: ubuntu # optional, only needed for an image that runs as a numeric uid
+    config_dir: ~/.claude_docker # optional, defaults to ~/.config/sndbx/<name>
+    config_target: .claude # optional, relative to the user's home, defaults to .<name>
+    docker_args: ["--memory=8g"] # optional, after the top-level ones
+  - name: opencode
+    config_target: .config/opencode
+    docker_args: ["--add-host=host.docker.internal:host-gateway"]
+  - name: codex
+  - name: dsh
+    ports: ["127.0.0.1:3080:3080"] # optional, always published; quote them
+    proxy: false # optional, keeps the image on the open network when proxy is set
 ```
 
-Every docker command sndbx runs is logged to `~/.local/state/sndbx/sndbx.log` (`$XDG_STATE_HOME/sndbx/` if set), which `sndbx logs commands` follows. The proxy's config is there too: `squid.conf`, which the proxy mounts, and `squid.conf.loaded`, the last one it loaded.
+- **Hardening:** `no-new-privileges` keeps the agent from gaining root through `sudo` or `su`; `sndbx exec -u root` still works. `--pids-limit` contains fork bombs; raise it if builds fail with "Resource temporarily unavailable".
+- **`docker_args` order:** top-level, the image's, then `run -- ...`. The last value of a flag like `--memory` wins; flags like `-e` add up.
+
+## Network proxy
+
+With `proxy` set, sandboxes run on `sndbx-internal`, a docker network with no route out. They reach the internet only through `sndbx-proxy`, a squid container that passes ports 80 and 443. `run` sets `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY`; tools that ignore them can't connect. The docker host and local network stay reachable.
+
+- `allow: listed` (default) allows only the hosts in `~/.config/sndbx/allowed_hosts`. An empty file blocks everything; a missing one is an error.
+- `allow: all` allows every host but link-local ones like `169.254.169.254`, to watch traffic without limiting it.
+
+`allowed_hosts` has one host per line; a leading `.` includes subdomains:
+
+```
+.anthropic.com
+.openai.com
+.github.com
+.githubusercontent.com
+.npmjs.org
+.pypi.org
+```
+
+`run` starts the proxy and network when missing, and applies changes on the next `run`. Pin `proxy.image` by digest: `docker image inspect ubuntu/squid --format '{{index .RepoDigests 0}}'`.
+
+`sndbx logs proxy` follows the requests, `--denied` only the denied ones, i.e. hosts to add. HTTPS shows only the host. If the proxy doesn't start, see `docker logs sndbx-proxy`; its `squid.conf` is next to `sndbx.log`.
+
+**Limits:**
+
+- An image with `ports` or its own `--network` needs `proxy: false`; docker allows neither on an internal network.
+- An agent can still send data out through an allowed host, like a GitHub gist.
+- All proxied sandboxes on a docker host share one proxy, with the settings of the latest `run`.
+
+**Remove** the proxy with `docker rm -f -v sndbx-proxy && docker network rm sndbx-internal`.
 
 ## Build
 
@@ -152,48 +138,56 @@ sndbx build -b claude          # rebuild sndbx:base first
 sndbx build -b                 # rebuild sndbx:base only
 ```
 
-`sndbx build`:
+`sndbx build` builds from `images/<name>/` without the docker cache, and adds new images to the settings with the keys from their `sndbx.yml`, so `sndbx run <name>` works right away. A downloaded binary needs `images_dir`, see [Install](#install).
 
-- builds each image from `images/<name>/`, without the docker cache
-- builds `sndbx:base` first if an image needs it and it doesn't exist, or with `-b`; on Linux with your uid and gid, see **On Linux** above
-- appends `- name: '<image>'` to the settings' `images` for an image that isn't there yet, so `sndbx run <image>` works right away, followed by the keys in `images/<image>/sndbx.yml` if it has one
-- prints the entry to add instead when it can't tell where to append
+### Add an image
 
-To add an image, create `images/<name>/Dockerfile` starting with:
+Create `images/<name>/Dockerfile` starting with:
 
 ```dockerfile
 ARG TAG_PREFIX=sndbx
 FROM ${TAG_PREFIX}:base
 ```
 
-If it needs more than its name in the settings to run, like `ports` and `proxy` for a web UI, put those keys of its entry in `images/<name>/sndbx.yml`, everything but `name`, one per line:
+If it needs more than a name in the settings, put those keys in `images/<name>/sndbx.yml`:
 
 ```yaml
 ports: ["127.0.0.1:3080:3080"]
 proxy: false
 ```
 
-`build` checks the file before building and copies the keys into the entry it adds; later changes to the file don't reach an entry that's already there.
+`build` copies them into the entry it adds; later changes to the file don't update an existing entry.
+
+## Linux file permissions
+
+Bind mounts keep the host's file owners, so on Linux `sndbx build` builds `sndbx:base` with your uid and gid, and the images on it can write to the mounts. It keeps uid 1000 when built as root, and on rootless or userns-remapped docker, where the mounts aren't writable and sndbx doesn't work around it.
+
+For an image not built on base, grant its uid access with ACLs, here 1000:
+
+```sh
+setfacl -m u:1000:rwx,d:u:1000:rwx ~/.config/sndbx/claude
+setfacl -R -m u:1000:rwX,d:u:1000:rwX ~/src/my-project
+```
 
 ## Images
 
-| Image      | Config in container             | Notes                                     |
-| ---------- | ------------------------------- | ----------------------------------------- |
-| `claude`   | `/home/ubuntu/.claude`          |                                           |
-| `opencode` | `/home/ubuntu/.config/opencode` | can use Ollama on the host, see below     |
-| `codex`    | `/home/ubuntu/.codex`           | runs without its own sandbox, see below   |
-| `cursor`   | `/home/ubuntu/.cursor`          | runs without its own sandbox, see below   |
-| `dsh`      | `/home/ubuntu/.dsh`             | web UI on port 3080, publish on 127.0.0.1 |
+| Image      | Config in container             | Notes                                   |
+| ---------- | ------------------------------- | --------------------------------------- |
+| `claude`   | `/home/ubuntu/.claude`          |                                         |
+| `opencode` | `/home/ubuntu/.config/opencode` | can use Ollama on the host, see below   |
+| `codex`    | `/home/ubuntu/.codex`           | runs without its own sandbox, see below |
+| `cursor`   | `/home/ubuntu/.cursor`          | runs without its own sandbox, see below |
+| `dsh`      | `/home/ubuntu/.dsh`             | web UI on port 3080, see below          |
 
-`sndbx build` builds them from `images/`, all on `sndbx:base` (`images/base/`): Ubuntu with node, python, ruby, rust, uv and postgres via mise, and Playwright with headless Chromium.
+All are built on `sndbx:base`: Ubuntu with node, pnpm, python, ruby, rust, uv and postgres via mise, and Playwright with headless Chromium.
 
-**opencode** keeps its config in `~/.config/opencode`, so its settings entry needs `config_target: .config/opencode`, which `build` adds from `images/opencode/sndbx.yml`; with the default it would get its config mounted at `~/.opencode`, where it doesn't look. `images/opencode/opencode/opencode.json` is an example config for Ollama on the host; copy it into opencode's config directory. The container reaches the host with `--add-host=host.docker.internal:host-gateway`, and on Linux Ollama must listen beyond loopback, e.g. `OLLAMA_HOST=0.0.0.0 ollama serve`.
+**opencode:** `images/opencode/opencode/opencode.json` is an example config for Ollama on the host; copy it into opencode's config directory. On Linux, Ollama must listen beyond loopback, e.g. `OLLAMA_HOST=0.0.0.0 ollama serve`.
 
-**codex** sandboxes its commands with bubblewrap, which needs user namespaces that docker's default seccomp profile blocks, so the image starts it with `--sandbox danger-full-access` and the container is the sandbox.
+**codex:** its own sandbox needs user namespaces, which docker blocks, so it runs with `--sandbox danger-full-access` and the container is the sandbox.
 
-**cursor** keeps its login in `~/.config/cursor` and everything else in `~/.cursor`, so the image links the first to the second and the one config directory keeps both. Like codex, it starts with its own sandbox off, `--sandbox disabled`.
+**cursor:** runs with `--sandbox disabled`, like codex. The image links `~/.config/cursor`, where cursor keeps its login, into `~/.cursor`, so one config directory holds both.
 
-**dsh** refuses to listen on a wildcard address, so the image binds the container's own address, which a published port reaches. `images/dsh/sndbx.yml` publishes it on `127.0.0.1` only, keep it that way: a plain `-p 3080:3080` lets anyone on your network control the agent.
+**dsh:** published on `127.0.0.1:3080` only. Keep it that way: a plain `-p 3080:3080` lets anyone on your network control the agent.
 
 ## Remove
 
@@ -201,18 +195,14 @@ proxy: false
 sndbx rm claude codex
 ```
 
-`sndbx rm`:
+This removes the images and comments out their settings entries; building again adds a fresh one. Config directories, with logins and history, stay.
 
-- removes the images, like `docker image rm`
-- comments out their entries in the settings under `# Removed by sndbx rm on <date>:`, so the settings aren't lost; building again adds a fresh entry
-- keeps their config directories, with the agents' logins and history
+It checks all images before removing any, and refuses:
 
-It checks every image before removing any, and refuses:
-
-- `base`, which the other images are built on
-- an image that's neither in the settings nor built
-- an image that containers use, in any state; remove them with `docker rm` first
-- a tag that another entry also runs, unless both are removed together
+- `base`
+- an image neither in the settings nor built
+- an image a container uses; `docker rm` those first
+- a tag another entry also runs, unless both are removed
 
 ## Run without sndbx
 
@@ -234,7 +224,7 @@ bundle exec rake                           # rustfmt, clippy, unit tests, then e
 bundle exec ruby test/completion_test.rb   # one file, against the last build
 ```
 
-The tests run `target/debug/sndbx` (or `$SNDBX_BIN`) with a temporary `HOME` and a fake `docker`, so they need neither Docker nor existing settings. The zsh completion tests need zsh and are skipped without it.
+The tests run `target/debug/sndbx` (or `$SNDBX_BIN`) with a temporary `HOME` and a fake `docker`, so they need neither Docker nor existing settings.
 
 ## License
 
