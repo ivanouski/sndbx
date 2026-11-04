@@ -11,7 +11,16 @@ As a bonus, the repo comes with Dockerfiles for Claude Code, opencode, Codex, Cu
 
 ## Install
 
-Build and install `sndbx` into `~/.cargo/bin` with a recent Rust toolchain, e.g. [mise](https://mise.jdx.dev)'s:
+Download the binary for your platform from the [latest release](https://github.com/ivanouski/sndbx/releases/latest) into `~/.local/bin`, or another directory in `PATH`:
+
+```sh
+asset=sndbx-macos   # or sndbx-linux-x86_64, sndbx-linux-arm64
+curl -fL --create-dirs -o ~/.local/bin/sndbx "https://github.com/ivanouski/sndbx/releases/latest/download/$asset" && chmod +x ~/.local/bin/sndbx
+```
+
+`sndbx build` builds the images from this repo's `images/`, so to use it, clone the repo and set `images_dir` in the settings, see [Configure](#configure).
+
+Or build and install `sndbx` into `~/.cargo/bin` from a clone with a recent Rust toolchain, e.g. [mise](https://mise.jdx.dev)'s:
 
 ```sh
 cargo install --path .
