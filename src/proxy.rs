@@ -6,9 +6,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, bail};
 
 use crate::docker::{self, ContainerState, container_state, network_internal};
-use crate::{Result, paths};
+use crate::settings::{Allow, Settings};
+use crate::{Result, allowlist, paths};
 
-const NETWORK: &str = "sndbx-internal";
+pub const NETWORK: &str = "sndbx-internal";
 pub const CONTAINER: &str = "sndbx-proxy";
 const PORT: u16 = 3128;
 // What tools read the proxy from, and the hosts to bypass it for
@@ -16,7 +17,7 @@ const PROXY_ENV: [&str; 4] = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_
 const PROXY_BYPASS_ENV: [&str; 2] = ["NO_PROXY", "no_proxy"];
 const PROXY_BYPASS_HOSTS: &str = "localhost,127.0.0.1,::1";
 const CONFIG_TARGET: &str = "/etc/squid/squid.conf";
-const ACCESS_LOG: &str = "/var/log/squid/access.log";
+pub const ACCESS_LOG: &str = "/var/log/squid/access.log";
 // Time like sndbx's log, client, squid result/HTTP status, method, URL, duration in ms, bytes sent and received
 const LOG_FORMAT: &str = "%{%FT%T%z}tl %>a %Ss/%03>Hs %rm %ru dur=%trms in=%>st out=%<st";
 // In denied requests' lines
@@ -30,6 +31,9 @@ tail -c +$((size + 1)) -F "$log" | grep --line-buffered -F -- "$text"
 "#;
 // Docker's default network, the proxy's way out
 const EGRESS_NETWORK: &str = "bridge";
+// Prints the last $1 lines of $2, then follows it until stdin closes, so the tail in the proxy ends with whoever
+// reads it
+const FOLLOW_UNTIL_EOF: &str = r#"tail -n "$1" -F "$2" & read -r _; kill $!"#;
 
 fn url() -> String {
     format!("http://{CONTAINER}:{PORT}")
@@ -75,6 +79,23 @@ enum Config {
     Changed,
     /// A proxy that mounted the previous file doesn't see it
     Created,
+}
+
+impl Proxy {
+    /// The proxy the settings turn on, `None` when they don't
+    pub fn from_settings(settings: &Settings) -> Result<Option<Self>> {
+        let Some(proxy) = settings.proxy() else {
+            return Ok(None);
+        };
+        let hosts = match proxy.allow {
+            Allow::Listed => Hosts::Listed(allowlist::load()?),
+            Allow::All => Hosts::All,
+        };
+        Ok(Some(Self {
+            image: proxy.image.clone(),
+            hosts,
+        }))
+    }
 }
 
 /// Starts the proxy and its network if needed, or updates its hosts
@@ -226,8 +247,13 @@ fn check_config(args: &[&str]) -> Result<()> {
     );
 }
 
+/// Whether the proxy's container is running
+pub fn is_up() -> bool {
+    container_state(CONTAINER).is_some_and(|state| state.up)
+}
+
 pub fn follow_log(lines: u64, denied: bool) -> Result<()> {
-    if !container_state(CONTAINER).is_some_and(|state| state.up) {
+    if !is_up() {
         bail!("the proxy {CONTAINER} isn't running, sndbx run starts it");
     }
     let lines = lines.to_string();
@@ -246,6 +272,118 @@ pub fn follow_log(lines: u64, denied: bool) -> Result<()> {
         &["tail", "-n", &lines, "-F", ACCESS_LOG]
     };
     docker::exec_until_interrupted(CONTAINER, command)
+}
+
+/// Docker arguments that print the access log's last `lines`, then with `follow` the new ones until docker's stdin
+/// closes; docker needs a piped stdin then
+pub fn log_args(lines: u64, follow: bool) -> Vec<String> {
+    let lines = lines.to_string();
+    let args: Vec<&str> = if follow {
+        vec![
+            "exec",
+            "-i",
+            CONTAINER,
+            "sh",
+            "-c",
+            FOLLOW_UNTIL_EOF,
+            "sh",
+            &lines,
+            ACCESS_LOG,
+        ]
+    } else {
+        vec!["exec", CONTAINER, "tail", "-n", &lines, ACCESS_LOG]
+    };
+    args.into_iter().map(ToString::to_string).collect()
+}
+
+/// A line of the access log, in `LOG_FORMAT`
+#[derive(Clone, Debug, PartialEq)]
+pub struct LogLine {
+    pub time: jiff::Timestamp,
+    /// The sandbox's address on the internal network
+    pub client: String,
+    /// Squid's, like `TCP_TUNNEL` or `TCP_DENIED`
+    pub result: String,
+    /// The HTTP status, 0 when there was none
+    pub status: u16,
+    pub method: String,
+    /// Lowercase, without the port; empty for a line without one, like a connection closed before its request
+    pub host: String,
+    pub port: Option<u16>,
+    pub duration_ms: u64,
+    /// Bytes from the sandbox
+    pub bytes_in: u64,
+    /// Bytes to the sandbox
+    pub bytes_out: u64,
+}
+
+impl LogLine {
+    /// `None` for a line in another format
+    pub fn parse(line: &str) -> Option<Self> {
+        let mut fields = line.split_whitespace();
+        let time = jiff::fmt::strtime::parse("%FT%T%z", fields.next()?)
+            .ok()?
+            .to_timestamp()
+            .ok()?;
+        let client = fields.next()?.to_string();
+        let (result, status) = fields.next()?.split_once('/')?;
+        let method = fields.next()?.to_string();
+        let url = fields.next()?;
+        // A CONNECT's is the host and port, a request's a URL; squid has its own for a line without one, like
+        // `error:transaction-end-before-headers`
+        let (host, port) = if method == "CONNECT" || url.contains("://") {
+            host_and_port(url)
+        } else {
+            (String::new(), None)
+        };
+        let mut value = |key: &str, unit: &str| -> Option<u64> {
+            let field = fields.next()?.strip_prefix(key)?;
+            field.strip_suffix(unit).unwrap_or(field).parse().ok()
+        };
+        let duration_ms = value("dur=", "ms")?;
+        let bytes_in = value("in=", "")?;
+        let bytes_out = value("out=", "")?;
+        Some(Self {
+            time,
+            client,
+            result: result.to_string(),
+            status: status.parse().ok()?,
+            method,
+            host,
+            port,
+            duration_ms,
+            bytes_in,
+            bytes_out,
+        })
+    }
+
+    pub fn denied(&self) -> bool {
+        self.result == "TCP_DENIED"
+    }
+}
+
+/// From a URL like `http://a.com:8080/x` or a CONNECT's `a.com:443`
+fn host_and_port(url: &str) -> (String, Option<u16>) {
+    let authority = url.split_once("://").map_or(url, |(_scheme, rest)| rest);
+    let authority = authority.split(['/', '?']).next().unwrap_or_default();
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_user, host)| host);
+    let (host, port) = match authority.strip_prefix('[') {
+        // An IPv6 address
+        Some(rest) => match rest.split_once(']') {
+            Some((host, port)) => (host, port.strip_prefix(':')),
+            None => (rest, None),
+        },
+        None => match authority.rsplit_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (authority, None),
+        },
+    };
+    (
+        host.to_ascii_lowercase(),
+        port.and_then(|port| port.parse().ok()),
+    )
 }
 
 fn start_error() -> String {
@@ -333,6 +471,64 @@ mod tests {
              logformat sndbx %{%FT%T%z}tl %>a %Ss/%03>Hs %rm %ru dur=%trms in=%>st out=%<st\n\
              access_log /var/log/squid/access.log sndbx\n"
         );
+    }
+
+    #[test]
+    fn parses_log_lines() {
+        let line = LogLine::parse(
+            "2026-11-05T12:41:03+0100 172.18.0.3 TCP_TUNNEL/200 CONNECT API.anthropic.com:443 dur=1234ms in=1200 \
+             out=48000",
+        )
+        .unwrap();
+        assert_eq!(
+            line,
+            LogLine {
+                time: "2026-11-05T11:41:03Z".parse().unwrap(),
+                client: "172.18.0.3".to_string(),
+                result: "TCP_TUNNEL".to_string(),
+                status: 200,
+                method: "CONNECT".to_string(),
+                host: "api.anthropic.com".to_string(),
+                port: Some(443),
+                duration_ms: 1234,
+                bytes_in: 1200,
+                bytes_out: 48000,
+            }
+        );
+        assert!(!line.denied());
+
+        let denied = LogLine::parse(
+            "2026-11-05T12:41:05+0000 172.18.0.4 TCP_DENIED/403 GET http://sentry.io/api?x=1 dur=0ms in=120 out=3900",
+        )
+        .unwrap();
+        assert!(denied.denied());
+        assert_eq!((denied.host.as_str(), denied.port), ("sentry.io", None));
+        assert_eq!(denied.status, 403);
+
+        assert_eq!(
+            LogLine::parse("2026-11-05T12:41:05+0000 1.2.3.4 NONE_NONE/000 - error:transaction-end-before-headers dur=0ms in=0 out=0")
+                .map(|line| (line.status, line.host, line.port)),
+            Some((0, String::new(), None))
+        );
+        assert_eq!(
+            LogLine::parse(
+                "1730000000.000 12 1.2.3.4 TCP_MISS/200 512 GET http://a.com/ - HIER_NONE/- -"
+            ),
+            None
+        );
+        assert_eq!(LogLine::parse(""), None);
+    }
+
+    #[test]
+    fn hosts_and_ports() {
+        assert_eq!(host_and_port("a.com:443"), ("a.com".to_string(), Some(443)));
+        assert_eq!(
+            host_and_port("http://u:p@A.com:8080/x:y"),
+            ("a.com".to_string(), Some(8080))
+        );
+        assert_eq!(host_and_port("http://a.com"), ("a.com".to_string(), None));
+        assert_eq!(host_and_port("[::1]:443"), ("::1".to_string(), Some(443)));
+        assert_eq!(host_and_port("http://[::1]/"), ("::1".to_string(), None));
     }
 
     #[test]

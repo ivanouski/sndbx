@@ -172,7 +172,7 @@ pub fn check_container(container: &str, containers: &[String], description: &str
 /// Returns only if docker can't run
 pub fn exec<S: AsRef<str>>(args: &[S]) -> Result<()> {
     prepare(args);
-    let e = docker_command(args).exec();
+    let e = command(args).exec();
     Err(e).context(format!("can't run {DOCKER}"))
 }
 
@@ -199,22 +199,35 @@ pub fn run_muted<S: AsRef<str>>(args: &[S]) -> bool {
 /// `Err` with docker's stderr, empty if docker can't run
 pub fn run_collecting_errors<S: AsRef<str>>(args: &[S]) -> std::result::Result<(), String> {
     prepare(args);
-    match docker_command(args).stdin(Stdio::null()).output() {
+    match command(args).stdin(Stdio::null()).output() {
         Ok(output) if output.status.success() => Ok(()),
         Ok(output) => Err(String::from_utf8_lossy(&output.stderr).into_owned()),
         Err(_) => Err(String::new()),
     }
 }
 
-fn docker_command<S: AsRef<str>>(args: &[S]) -> Command {
+/// Docker with the arguments, not logged; `run` and the others log what they run
+pub fn command<S: AsRef<str>>(args: &[S]) -> Command {
     let mut command = Command::new(DOCKER);
     command.args(args.iter().map(AsRef::as_ref));
+    if crate::in_background() {
+        command.process_group(0);
+    }
     command
 }
 
+/// In the background, keeps only the errors: stdout has progress, like docker pull's, or IDs
 fn run_with_stdout<S: AsRef<str>>(args: &[S], stdout: Stdio) -> bool {
     prepare(args);
-    docker_command(args)
+    let mut command = command(args);
+    if crate::in_background() {
+        let Ok(output) = command.stdin(Stdio::null()).stdout(Stdio::null()).output() else {
+            return false;
+        };
+        crate::eprint_text(&String::from_utf8_lossy(&output.stderr));
+        return output.status.success();
+    }
+    command
         .stdout(stdout)
         .status()
         .is_ok_and(|status| status.success())
@@ -242,13 +255,13 @@ fn log_command<S: AsRef<str>>(args: &[S]) {
         .and_then(|()| OpenOptions::new().create(true).append(true).open(&path))
         .and_then(|mut file| file.write_all(line.as_bytes()));
     if let Err(e) = written {
-        eprintln!("Warning: can't write {}: {e}", path.display());
+        crate::eprint_text(&format!("Warning: can't write {}: {e}\n", path.display()));
     }
 }
 
-/// Stdout, `None` if docker failed or can't run
-fn output(args: &[&str]) -> Option<String> {
-    let output = docker_command(args).stderr(Stdio::null()).output().ok()?;
+/// Stdout, `None` if docker failed or can't run; not logged, for what sndbx reads from docker
+pub fn output<S: AsRef<str>>(args: &[S]) -> Option<String> {
+    let output = command(args).stderr(Stdio::null()).output().ok()?;
     output
         .status
         .success()
@@ -257,7 +270,7 @@ fn output(args: &[&str]) -> Option<String> {
 
 /// `None` if docker can't run
 fn run_quietly(args: &[&str]) -> Option<bool> {
-    docker_command(args)
+    command(args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()

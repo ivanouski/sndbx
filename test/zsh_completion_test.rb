@@ -9,7 +9,7 @@ class ZshCompletionTest < Minitest::Test
   COMPLETION_DIR = File.expand_path('../completions/zsh', __dir__)
 
   COMMANDS = [[], ['run'], ['build'], ['rm'], ['exec'], ['resume'], ['list'], %w[list running], %w[list stopped],
-              ['logs'], %w[logs commands], %w[logs proxy]].freeze
+              ['logs'], %w[logs commands], %w[logs proxy], ['top']].freeze
 
   # zsh with zpty, which types the line into an interactive zsh
   ZSH = system('zsh', '-fc', 'zmodload zsh/zpty', out: File::NULL, err: File::NULL)
@@ -117,7 +117,7 @@ class ZshCompletionTest < Minitest::Test
   end
 
   def test_commands
-    assert_equal %w[build exec list logs resume rm run], complete('')
+    assert_equal %w[build exec list logs resume rm run top], complete('')
     assert_equal %w[resume rm run], complete('r')
     assert_equal %w[run], complete('ru')
   end
@@ -272,6 +272,11 @@ class ZshCompletionTest < Minitest::Test
     assert_equal %w[--help -h], complete('list running claude ')
   end
 
+  def test_top_completes_views
+    assert_equal %w[dashboard images], complete('top --view ')
+    assert_equal %w[images], complete('top --view=i')
+  end
+
   def test_logs_completes_what_to_follow
     assert_equal %w[commands proxy], complete('logs ')
     assert_equal %w[proxy], complete('logs p')
@@ -392,13 +397,14 @@ class ZshCompletionTest < Minitest::Test
     end
   end
 
-  # Option and command names with their descriptions in the completion, like {-v+,--volume=}'[Mount ...]'
-  # and 'run:Run a sandboxed image'
+  # Option and command names with their descriptions in the completion, like {-v+,--volume=}'[Mount ...]',
+  # '--view=[The view ...]' and 'run:Run a sandboxed image'
   def completion_descriptions
     content = File.read(File.join(COMPLETION_DIR, '_sndbx'))
     options = content.scan(/\{(-\w)\+?,(--[\w-]+)=?\}['"]\[([^\]]*)\]/).flat_map do |short, long, description|
       [[short, description], [long, description]]
     end
+    options += content.scan(/['"](--[\w-]+)=?\[([^\]]*)\]/)
     options + content.scan(/^\s+(['"])([a-z]+):(.+)\1$/).map { |_quote, name, description| [name, description] }
   end
 end

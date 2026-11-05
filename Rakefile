@@ -3,16 +3,16 @@
 require 'rake/testtask'
 require 'rubocop/rake_task'
 
-desc 'Build sndbx'
+desc 'Build sndbx and sndbx-top'
 task :build do
-  sh 'cargo', 'build'
+  sh 'cargo', 'build', '--workspace'
 end
 
-desc 'Check sndbx with rustfmt, clippy and its unit tests'
+desc 'Check sndbx and sndbx-top with rustfmt, clippy and their unit tests'
 task :check do
-  sh 'cargo', 'fmt', '--check'
-  sh 'cargo', 'clippy', '--all-targets', '--', '-D', 'warnings'
-  sh 'cargo', 'test'
+  sh 'cargo', 'fmt', '--all', '--check'
+  sh 'cargo', 'clippy', '--workspace', '--all-targets', '--', '-D', 'warnings'
+  sh 'cargo', 'test', '--workspace'
 end
 
 Rake::TestTask.new do |t|

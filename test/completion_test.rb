@@ -49,13 +49,13 @@ class CompletionTest < Minitest::Test
 
   def test_options_match_help
     [[], ['run'], ['build'], ['rm'], ['exec'], ['resume'], ['list'], %w[list running], ['logs'], %w[logs commands],
-     %w[logs proxy]].each do |command|
+     %w[logs proxy], ['top']].each do |command|
       assert_equal help_options(*command), complete(*command, '-'), "options of sndbx #{command.join(' ')}"
     end
   end
 
   def test_commands
-    assert_equal %w[build exec list logs resume rm run], complete('')
+    assert_equal %w[build exec list logs resume rm run top], complete('')
     assert_equal %w[resume rm run], complete('r')
     assert_equal %w[run], complete('ru')
   end
@@ -250,6 +250,13 @@ class CompletionTest < Minitest::Test
     assert_empty complete('list', 'configured', '')
     assert_empty complete('list', 'buildable', '')
     assert_empty complete('list', 'running', 'claude', '')
+  end
+
+  def test_top_completes_views
+    assert_equal %w[dashboard images], complete('top', '--view', '')
+    assert_equal %w[images], complete('top', '--view', 'i')
+    assert_empty complete('top', '--size', '')
+    assert_empty complete('top', '')
   end
 
   def test_logs_completes_what_to_follow

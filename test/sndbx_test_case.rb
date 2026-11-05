@@ -25,6 +25,10 @@ class SndbxTestCase < Minitest::Test
     networks_path = ENV.fetch('DOCKER_NETWORKS')
     networks = File.exist?(networks_path) ? File.readlines(networks_path, chomp: true).to_h(&:split) : {}
     proxy_path = ENV.fetch('DOCKER_PROXY')
+    # What sndbx top reads: JSON objects by container name or tag, merged into the fake's own, and the proxy's log
+    read_json = ->(name) { File.exist?(ENV.fetch(name, '')) ? JSON.parse(File.read(ENV.fetch(name))) : {} }
+    merge = ->(base, extra) { base.merge(extra) { |_key, a, b| a.is_a?(Hash) && b.is_a?(Hash) ? merge.(a, b) : b } }
+    access_log = ENV.fetch('DOCKER_ACCESS_LOG', '')
 
     case ARGV
     in ['info']
@@ -83,6 +87,42 @@ class SndbxTestCase < Minitest::Test
     in ['build', *, '-t', tag, _]
       exit(false) if ENV['DOCKER_BROKEN'] == tag
       File.write(images_path, "\#{tag}\\n", mode: 'a')
+    in ['ps', '--all', '--filter', 'label=sndbx.image', '--format', '{{.ID}}']
+      containers.each { |image, name| puts name unless image == '-' }
+    in ['inspect', *names]
+      details = read_json.('DOCKER_INSPECT')
+      found = names.filter_map do |name|
+        image, _, state = containers.find { |container| container[1] == name }
+        next unless image
+
+        merge.({ 'Name' => "/\#{name}", 'Config' => { 'Labels' => { 'sndbx.image' => image } },
+                 'State' => { 'Status' => state || 'running' }, 'NetworkSettings' => { 'Networks' => {} } },
+               details.fetch(name, {}))
+      end
+      puts JSON.generate(found)
+      exit(found.size == names.size)
+    in ['stats', '--no-stream', '--format', '{{json .}}', *names]
+      stats = read_json.('DOCKER_STATS')
+      names.each { |name| puts JSON.generate({ 'Name' => name, **stats[name] }) if stats.key?(name) }
+    in ['image', 'ls', '--format', '{{json .}}']
+      details = read_json.('DOCKER_IMAGE_DETAILS')
+      images.each_key do |tag|
+        repository, _, name = tag.rpartition(':')
+        puts JSON.generate({ 'Repository' => repository, 'Tag' => name, 'Size' => '1GB',
+                             'CreatedAt' => '2026-01-01 00:00:00 +0000 UTC', **details.fetch(tag, {}) })
+      end
+    in ['exec', 'sndbx-proxy', 'tail', '-n', _, '/var/log/squid/access.log']
+      print(File.read(access_log)) if File.exist?(access_log)
+    in ['exec', '-i', 'sndbx-proxy', 'sh', '-c', _, 'sh', _, '/var/log/squid/access.log']
+      print(File.read(access_log)) if File.exist?(access_log)
+      $stdout.flush
+      $stdin.read
+    in ['events', *]
+      # Like docker's, which doesn't read its stdin: only a signal ends it, or its next event once its reader is gone
+      File.write(ENV.fetch('DOCKER_EVENTS_PID'), Process.pid.to_s) if ENV.key?('DOCKER_EVENTS_PID')
+      sleep
+    in ['stop' | 'rm', *, name]
+      File.write(containers_path, containers.reject { |container| container[1] == name }.map { |c| "\#{c.join(' ')}\\n" }.join)
     else
     end
   RUBY
@@ -95,6 +135,11 @@ class SndbxTestCase < Minitest::Test
     @docker_containers = File.join(@root, 'docker-containers')
     @docker_networks = File.join(@root, 'docker-networks')
     @docker_proxy = File.join(@root, 'docker-proxy')
+    @docker_inspect = File.join(@root, 'docker-inspect.json')
+    @docker_stats = File.join(@root, 'docker-stats.json')
+    @docker_image_details = File.join(@root, 'docker-image-details.json')
+    @docker_access_log = File.join(@root, 'docker-access.log')
+    @docker_events_pid = File.join(@root, 'docker-events.pid')
 
     write_executable(File.join(@bin, 'docker'), FAKE_DOCKER)
   end
@@ -108,7 +153,11 @@ class SndbxTestCase < Minitest::Test
       'DOCKER_IMAGES' => @docker_images,
       'DOCKER_CONTAINERS' => @docker_containers,
       'DOCKER_NETWORKS' => @docker_networks,
-      'DOCKER_PROXY' => @docker_proxy
+      'DOCKER_PROXY' => @docker_proxy,
+      'DOCKER_INSPECT' => @docker_inspect,
+      'DOCKER_STATS' => @docker_stats,
+      'DOCKER_IMAGE_DETAILS' => @docker_image_details,
+      'DOCKER_ACCESS_LOG' => @docker_access_log
     }.merge(env))
   end
 

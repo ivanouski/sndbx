@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::io::IsTerminal;
 use std::os::unix::process::CommandExt;
 use std::process::Command;
@@ -8,20 +7,19 @@ use clap::builder::NonEmptyStringValueParser;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::builder::{BASE_NAME, Builder};
-use crate::docker::{
-    self, check_container, check_docker, image_containers, image_exists, running_containers,
-    stopped_containers,
-};
-use crate::proxy::{self, Hosts, Proxy};
+use crate::docker::{self, check_container, check_docker, running_containers, stopped_containers};
+use crate::proxy::{self, Proxy};
 use crate::sandbox::{MOUNT_ROOT, Options, Sandbox};
-use crate::settings::{self, Allow, IMAGES_DIR_SETTING, Image, Settings};
-use crate::{Result, allowlist, paths, print_line, print_status, unique};
+use crate::settings::{self, IMAGES_DIR_SETTING, Image, Settings};
+use crate::{Result, paths, print_line, removal};
 
 /// Usage first
 const HELP_TEMPLATE: &str = "{usage-heading} {usage}\n\n{all-args}{after-help}";
 /// Usage, then the command's description
 const COMMAND_HELP_TEMPLATE: &str = "{usage-heading} {usage}\n\n{before-help}{all-args}";
 const DEFAULT_LINES: u64 = 10;
+/// The dashboard's binary, which `sndbx top` runs
+const TOP: &str = "sndbx-top";
 
 #[derive(Parser)]
 #[command(
@@ -108,6 +106,17 @@ enum Commands {
         before_help = "Follows a log, like tail -f."
     )]
     Logs(Logs),
+
+    /// Show the sandboxes, the proxy's requests and the images
+    #[command(
+        override_usage = "sndbx top [options]",
+        before_help = format!(
+            "Runs {TOP}, a terminal dashboard of the sandboxes, the proxy's requests and the images,\n\
+             from sndbx's directory or PATH. Passes the options to it, see sndbx top --help."
+        ),
+        disable_help_flag = true
+    )]
+    Top(Top),
 }
 
 #[derive(Args)]
@@ -262,6 +271,17 @@ enum LogsWhat {
 }
 
 #[derive(Args)]
+struct Top {
+    /// sndbx-top's options
+    #[arg(
+        trailing_var_arg = true,
+        allow_hyphen_values = true,
+        value_name = "OPTIONS"
+    )]
+    options: Vec<String>,
+}
+
+#[derive(Args)]
 struct ProxyLogs {
     #[command(flatten)]
     lines: Lines,
@@ -315,6 +335,7 @@ pub fn cli() -> Result<()> {
         Commands::Resume(args) => resume(&args),
         Commands::List(args) => list(args),
         Commands::Logs(args) => logs(args),
+        Commands::Top(args) => top(&args),
     }
 }
 
@@ -337,113 +358,19 @@ fn run(args: Run) -> Result<()> {
 
 /// `None` when the proxy is off or the image opts out
 fn proxy_for(settings: &Settings, image: &Image) -> Result<Option<Proxy>> {
-    let Some(proxy) = settings.proxy().filter(|_| image.proxy) else {
+    if !image.proxy {
         return Ok(None);
-    };
-    let hosts = match proxy.allow {
-        Allow::Listed => Hosts::Listed(allowlist::load()?),
-        Allow::All => Hosts::All,
-    };
-    Ok(Some(Proxy {
-        image: proxy.image.clone(),
-        hosts,
-    }))
+    }
+    Proxy::from_settings(settings)
 }
 
 fn build(args: &Build) -> Result<()> {
     Builder::new(&Settings::load_or_default()?).build(&args.images, args.rebuild_base)
 }
 
-struct Removal<'a> {
-    name: &'a str,
-    tag: String,
-    exists: bool,
-}
-
-/// Checks every image before removing any
 fn rm(args: &Rm) -> Result<()> {
-    let settings = Settings::load_or_default()?;
-    if args.images.iter().any(|name| name == BASE_NAME) {
-        bail!("{BASE_NAME} can't be removed, the other images are built on it");
-    }
-    let names = unique(args.images.iter().map(String::as_str));
-
-    check_docker()?;
-    let removals = names
-        .iter()
-        .map(|name| check_removal(&settings, name, &names))
-        .collect::<Result<Vec<_>>>()?;
-    remove_images(&removals)
-}
-
-/// Fails if the image is unknown, an image not in `names` shares its tag, or containers use it
-fn check_removal<'a>(settings: &Settings, name: &'a str, names: &[&str]) -> Result<Removal<'a>> {
-    let configured_tag = settings.configured_tag(name);
-    let tag = configured_tag
-        .clone()
-        .unwrap_or_else(|| settings.default_tag(name));
-    let exists = image_exists(&tag);
-    if configured_tag.is_none() && !exists {
-        bail!(
-            "unknown image '{name}', it's neither in {} nor built as {tag}",
-            settings::path().display()
-        );
-    }
-
-    let others: Vec<&str> = settings
-        .names_running(&tag)
-        .into_iter()
-        .filter(|other| !names.contains(other))
-        .collect();
-    if !others.is_empty() {
-        bail!(
-            "{tag} is also run by {}, rm them together",
-            others.join(", ")
-        );
-    }
-    if exists {
-        let containers = image_containers(&tag)?;
-        if !containers.is_empty() {
-            bail!(
-                "{tag} is used by containers: {}, remove them with docker rm first",
-                containers.join(", ")
-            );
-        }
-    }
-    Ok(Removal { name, tag, exists })
-}
-
-/// Removes each tag once and comments out the entries
-fn remove_images(removals: &[Removal]) -> Result<()> {
-    let mut removed = HashSet::new();
-    for removal in removals {
-        let tag = removal.tag.as_str();
-        if removed.insert(tag) {
-            if removal.exists {
-                if !docker::run(&["image", "rm", tag]) {
-                    bail!("failed to remove {tag}");
-                }
-                print_status(&format!("Removed {tag}"));
-            } else {
-                print_status(&format!("{tag} doesn't exist"));
-            }
-        }
-        comment_out(removal.name);
-    }
-    Ok(())
-}
-
-/// Only warns on failure, as the image is removed
-fn comment_out(name: &str) {
-    let path = settings::path();
-    match settings::comment_out_image(name) {
-        Ok(false) => {}
-        Ok(true) => print_status(&format!("Commented out {name} in {}", path.display())),
-        Err(e) => eprintln!(
-            "Warning: can't comment out {name} in the settings: {e:#}.\nRemove its entry from {} yourself.",
-            path.display()
-        ),
-    }
+    let names: Vec<&str> = args.images.iter().map(String::as_str).collect();
+    removal::remove(&Settings::load_or_default()?, &names)
 }
 
 fn exec(args: &Exec) -> Result<()> {
@@ -539,6 +466,23 @@ fn command_log(lines: u64) -> Result<()> {
         bail!("{TAIL} is not installed");
     }
     Err(e).context(format!("can't run {TAIL}"))
+}
+
+/// Runs the dashboard next to this binary, so the two match, or the one in PATH
+fn top(args: &Top) -> Result<()> {
+    let sibling = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join(TOP)))
+        .filter(|path| path.is_file());
+    let program = sibling.map_or_else(|| TOP.into(), std::path::PathBuf::into_os_string);
+    let e = Command::new(&program).args(&args.options).exec();
+    if e.kind() == std::io::ErrorKind::NotFound {
+        bail!(
+            "{TOP} is not installed, put it next to sndbx or in PATH: download it from the latest release, \
+             or run cargo install --path top in a clone"
+        );
+    }
+    Err(e).context(format!("can't run {TOP}"))
 }
 
 /// sndbx's help, or the subcommand's

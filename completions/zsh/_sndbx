@@ -191,6 +191,7 @@ _sndbx() {
     'resume:Restart a stopped sandbox'
     'list:Print image or sandbox names'
     "logs:Follow the docker commands sndbx ran or the proxy's requests"
+    "top:Show the sandboxes, the proxy's requests and the images"
   )
 
   _arguments -C \
@@ -223,6 +224,14 @@ _sndbx() {
           ;;
         list) _sndbx_list && ret=0 ;;
         logs) _sndbx_logs && ret=0 ;;
+        top)
+          _arguments \
+            '--view=[The view to start in]:view:(dashboard images)' \
+            '--once[Print a frame as text and exit]' \
+            "--size=[The frame's size with --once]:size: " \
+            '(- *)'{-h,--help}'[Print help]' \
+            '(- *)'{-V,--version}'[Print version]' && ret=0
+          ;;
       esac
       ;;
   esac

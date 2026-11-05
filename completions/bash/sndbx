@@ -269,6 +269,17 @@ _sndbx_logs() {
   fi
 }
 
+# Completes sndbx-top's options and the views
+_sndbx_top() {
+  if [[ "${prev}" == --view ]]; then
+    _sndbx_reply 'dashboard images'
+  elif [[ "${prev}" == --size ]]; then
+    return 0
+  elif [[ "${cur}" == -* ]]; then
+    _sndbx_reply '--view --once --size -h --help -V --version'
+  fi
+}
+
 _sndbx() {
   local cur="${COMP_WORDS[COMP_CWORD]}"
   local prev="${COMP_WORDS[COMP_CWORD-1]}"
@@ -280,7 +291,7 @@ _sndbx() {
     if [[ "${cur}" == -* ]]; then
       _sndbx_reply '-V --version -h --help'
     else
-      _sndbx_reply 'run build rm exec resume list logs'
+      _sndbx_reply 'run build rm exec resume list logs top'
     fi
     return 0
   fi
@@ -312,6 +323,7 @@ _sndbx() {
     resume) _sndbx_resume ;;
     list) _sndbx_list ;;
     logs) _sndbx_logs ;;
+    top) _sndbx_top ;;
   esac
   return 0
 }

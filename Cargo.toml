@@ -1,10 +1,26 @@
-[package]
-name = "sndbx"
-version = "0.40.0"
+[workspace]
+members = ["top"]
+
+[workspace.package]
+version = "0.41.4"
 edition = "2024"
-description = "A small wrapper around docker run for running coding agents in a sandbox"
 license = "MIT"
 publish = false
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+# The library is sndbx's own, its callers are the two binaries
+must_use_candidate = "allow"
+
+[package]
+name = "sndbx"
+description = "A small wrapper around docker run for running coding agents in a sandbox"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
 
 [dependencies]
 anyhow = "1"
@@ -13,7 +29,5 @@ jiff = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_norway = "0.9"
 
-[lints.clippy]
-pedantic = { level = "warn", priority = -1 }
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
+[lints]
+workspace = true
