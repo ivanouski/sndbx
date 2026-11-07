@@ -8,6 +8,8 @@ use anyhow::{Context, bail};
 use crate::docker::{self, ContainerState, container_state, network_internal};
 use crate::{Result, paths};
 
+mod pretty;
+
 const NETWORK: &str = "sndbx-internal";
 pub const CONTAINER: &str = "sndbx-proxy";
 const PORT: u16 = 3128;
@@ -17,10 +19,21 @@ const PROXY_BYPASS_ENV: [&str; 2] = ["NO_PROXY", "no_proxy"];
 const PROXY_BYPASS_HOSTS: &str = "localhost,127.0.0.1,::1";
 const CONFIG_TARGET: &str = "/etc/squid/squid.conf";
 const ACCESS_LOG: &str = "/var/log/squid/access.log";
-// Time like sndbx's log, client, squid result/HTTP status, method, URL, duration in ms, bytes sent and received
-const LOG_FORMAT: &str = "%{%FT%T%z}tl %>a %Ss/%03>Hs %rm %ru dur=%trms in=%>st out=%<st";
-// In denied requests' lines
-const DENIED: &str = " TCP_DENIED/";
+// The log's time, like sndbx's log, which `--pretty` parses back
+const LOG_TIME_FORMAT: &str = "%FT%T%z";
+// Prefixes and the unit of the log's last fields
+const DURATION_FIELD: &str = "dur=";
+const DURATION_UNIT: &str = "ms";
+const SENT_FIELD: &str = "in=";
+const RECEIVED_FIELD: &str = "out=";
+// Squid's result for denied requests, before the HTTP status
+const DENIED_RESULT: &str = "TCP_DENIED";
+// Squid's result and the HTTP status, in requests' lines
+const STATUS_SEPARATOR: char = '/';
+// The method of HTTPS requests, whose URL is the host and port
+const TUNNEL_METHOD: &str = "CONNECT";
+const HTTP_PORT: u16 = 80;
+const HTTPS_PORT: u16 = 443;
 // Follows the log's lines containing $3, the last $1 up to its current size first, so none repeats or goes missing.
 // -F survives log rotation.
 const FOLLOW_MATCHING: &str = r#"lines=$1 log=$2 text=$3
@@ -226,12 +239,21 @@ fn check_config(args: &[&str]) -> Result<()> {
     );
 }
 
-pub fn follow_log(lines: u64, denied: bool) -> Result<()> {
+pub struct LogOptions {
+    pub lines: u64,
+    /// Only the denied requests
+    pub denied: bool,
+    /// With sandbox names, local times and readable sizes
+    pub pretty: bool,
+}
+
+pub fn follow_log(options: &LogOptions) -> Result<()> {
     if !container_state(CONTAINER).is_some_and(|state| state.up) {
         bail!("the proxy {CONTAINER} isn't running, sndbx run starts it");
     }
-    let lines = lines.to_string();
-    let command: &[&str] = if denied {
+    let lines = options.lines.to_string();
+    let denied = denied_text();
+    let command: &[&str] = if options.denied {
         &[
             "sh",
             "-c",
@@ -239,13 +261,30 @@ pub fn follow_log(lines: u64, denied: bool) -> Result<()> {
             "sh",
             &lines,
             ACCESS_LOG,
-            DENIED,
+            &denied,
         ]
     } else {
         // -F survives log rotation
         &["tail", "-n", &lines, "-F", ACCESS_LOG]
     };
-    docker::exec_until_interrupted(CONTAINER, command)
+    if options.pretty {
+        pretty::follow(CONTAINER, command, NETWORK)
+    } else {
+        docker::exec_until_interrupted(CONTAINER, command)
+    }
+}
+
+/// In denied requests' lines
+fn denied_text() -> String {
+    format!(" {DENIED_RESULT}{STATUS_SEPARATOR}")
+}
+
+/// Time like sndbx's log, client, squid result/HTTP status, method, URL, duration in ms, bytes sent and received
+fn log_format() -> String {
+    format!(
+        "%{{{LOG_TIME_FORMAT}}}tl %>a %Ss{STATUS_SEPARATOR}%03>Hs %rm %ru \
+         {DURATION_FIELD}%tr{DURATION_UNIT} {SENT_FIELD}%>st {RECEIVED_FIELD}%<st"
+    )
 }
 
 fn start_error() -> String {
@@ -268,17 +307,18 @@ fn config(hosts: &Hosts) -> String {
             "http_access allow allowed\n",
         ),
     };
+    let log_format = log_format();
     format!(
         "http_port {PORT}\n\
-         acl SSL_ports port 443\n\
-         acl Safe_ports port 80 443\n\
+         acl SSL_ports port {HTTPS_PORT}\n\
+         acl Safe_ports port {HTTP_PORT} {HTTPS_PORT}\n\
          {acl}\
          http_access deny !Safe_ports\n\
-         http_access deny CONNECT !SSL_ports\n\
+         http_access deny {TUNNEL_METHOD} !SSL_ports\n\
          {allow}\
          http_access deny all\n\
          cache deny all\n\
-         logformat sndbx {LOG_FORMAT}\n\
+         logformat sndbx {log_format}\n\
          access_log {ACCESS_LOG} sndbx\n"
     )
 }

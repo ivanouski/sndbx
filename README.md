@@ -56,6 +56,7 @@ sndbx list buildable                                  # image names build accept
 sndbx list running claude                             # claude's sandboxes; stopped for the stopped ones
 sndbx logs commands                                   # follow the docker commands sndbx ran
 sndbx logs proxy                                      # follow the proxy's requests
+sndbx logs proxy -p                                   # with sandbox names, local times and readable sizes
 ```
 
 `sndbx run` also:
@@ -119,7 +120,7 @@ With `proxy` set, sandboxes run on `sndbx-internal`, a docker network with no ro
 
 `run` starts the proxy and network when missing, and applies changes on the next `run`. Pin `proxy.image` by digest: `docker image inspect ubuntu/squid --format '{{index .RepoDigests 0}}'`.
 
-`sndbx logs proxy` follows the requests, `--denied` only the denied ones, i.e. hosts to add. HTTPS shows only the host. If the proxy doesn't start, see `docker logs sndbx-proxy`; its `squid.conf` is next to `sndbx.log`.
+`sndbx logs proxy` follows the requests, `--denied` only the denied ones, i.e. hosts to add. HTTPS shows only the host. `--pretty` names the sandbox that had a request's address at the time, shows local times, durations in seconds and sizes in KB or MB, and colors the outcome on a terminal unless `NO_COLOR` is set. If the proxy doesn't start, see `docker logs sndbx-proxy`; its `squid.conf` is next to `sndbx.log`.
 
 **Limits:**
 

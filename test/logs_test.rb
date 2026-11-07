@@ -110,6 +110,33 @@ class LogsTest < SndbxTestCase
     assert_equal ['sh', '10', '/var/log/squid/access.log', ' TCP_DENIED/'], call.drop(5)
   end
 
+  def test_logs_formats_the_proxy_requests
+    write_running_proxy
+    File.write(@docker_sandboxes, "my-project 172.18.0.3 2026-11-07T12:00:00.5Z\n")
+    File.write(@docker_access_log, <<~LOG)
+      2026-11-07T13:03:12+0000 172.18.0.3 TCP_TUNNEL/200 CONNECT api.anthropic.com:443 dur=81234ms in=1520 out=48211
+      2026-11-07T13:03:15+0000 172.18.0.7 TCP_DENIED/403 CONNECT evil.example.com:443 dur=0ms in=0 out=3960
+      tail: access.log has been replaced
+    LOG
+
+    result = sndbx('logs', 'proxy', '--pretty', env: { 'TZ' => 'JST-9' })
+
+    assert_predicate result, :success?
+    assert_equal ['2026-11-07 22:03:12  my-project       ok             81s  ↓  47KB  ↑ 1.5KB  api.anthropic.com',
+                  '2026-11-07 22:03:15  172.18.0.7       denied        0.0s  ↓ 3.9KB  ↑    0B  evil.example.com',
+                  'tail: access.log has been replaced'],
+                 result.out.lines(chomp: true)
+    assert_equal %w[exec sndbx-proxy tail -n 10 -F /var/log/squid/access.log], docker_execs.last
+  end
+
+  def test_logs_fails_when_the_formatted_proxy_log_ends
+    write_running_proxy
+
+    result = sndbx('logs', 'proxy', '-p', env: { 'DOCKER_BROKEN' => 'tail' })
+
+    assert_error "can't follow the proxy's log", result
+  end
+
   def test_logs_without_a_running_proxy
     assert_error "the proxy sndbx-proxy isn't running, sndbx run starts it", sndbx('logs', 'proxy')
     File.write(@docker_proxy, 'false false 0 squid /x bridge')

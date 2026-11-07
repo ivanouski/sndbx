@@ -37,7 +37,8 @@ class ExecTest < SndbxTestCase
 
     PTY.spawn({ 'HOME' => @home, 'PATH' => @bin, 'DOCKER_LOG' => @docker_log, 'DOCKER_IMAGES' => @docker_images,
                 'DOCKER_CONTAINERS' => @docker_containers, 'DOCKER_NETWORKS' => @docker_networks,
-                'DOCKER_PROXY' => @docker_proxy },
+                'DOCKER_PROXY' => @docker_proxy, 'DOCKER_SANDBOXES' => @docker_sandboxes,
+                'DOCKER_ACCESS_LOG' => @docker_access_log },
               *COMMAND, 'exec', 'claude', 'gifted_mcnulty', 'bash', chdir: @work) do |out, _in, pid|
       begin
         out.read

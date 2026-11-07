@@ -279,7 +279,7 @@ class ZshCompletionTest < Minitest::Test
 
   def test_logs_completes_only_options_after_what
     assert_equal help_options('logs', 'commands'), complete('logs commands ')
-    assert_equal %w[--denied --help -d -h], complete('logs proxy -n 5 ')
+    assert_equal %w[--denied --help --pretty -d -h -p], complete('logs proxy -n 5 ')
   end
 
   def test_logs_completes_no_line_count

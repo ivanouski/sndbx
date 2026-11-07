@@ -12,7 +12,7 @@ use crate::docker::{
     self, check_container, check_docker, image_containers, image_exists, running_containers,
     stopped_containers,
 };
-use crate::proxy::{self, Hosts, Proxy};
+use crate::proxy::{self, Hosts, LogOptions, Proxy};
 use crate::sandbox::{MOUNT_ROOT, Options, Sandbox};
 use crate::settings::{self, Allow, IMAGES_DIR_SETTING, Image, Settings};
 use crate::{Result, allowlist, paths, print_line, print_status, unique};
@@ -269,6 +269,10 @@ struct ProxyLogs {
     /// Only the requests the proxy denied
     #[arg(short, long)]
     denied: bool,
+
+    /// Sandbox names, local times and readable sizes, in color on a terminal
+    #[arg(short, long)]
+    pretty: bool,
 }
 
 #[derive(Args)]
@@ -518,7 +522,11 @@ fn logs(args: Logs) -> Result<()> {
         Some(LogsWhat::Commands(args)) => command_log(args.lines),
         Some(LogsWhat::Proxy(args)) => {
             check_docker()?;
-            proxy::follow_log(args.lines.lines, args.denied)
+            proxy::follow_log(&LogOptions {
+                lines: args.lines.lines,
+                denied: args.denied,
+                pretty: args.pretty,
+            })
         }
     }
 }

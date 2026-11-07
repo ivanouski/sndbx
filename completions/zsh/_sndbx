@@ -173,7 +173,11 @@ _sndbx_logs() {
       curcontext=${curcontext%:*}-$words[1]:
       case $words[1] in
         commands) _arguments $common && ret=0 ;;
-        proxy) _arguments $common '(-d --denied)'{-d,--denied}'[Only the requests the proxy denied]' && ret=0 ;;
+        proxy)
+          _arguments $common \
+            '(-d --denied)'{-d,--denied}'[Only the requests the proxy denied]' \
+            '(-p --pretty)'{-p,--pretty}'[Sandbox names, local times and readable sizes, in color on a terminal]' && ret=0
+          ;;
       esac
       ;;
   esac

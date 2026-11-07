@@ -25,6 +25,9 @@ class SndbxTestCase < Minitest::Test
     networks_path = ENV.fetch('DOCKER_NETWORKS')
     networks = File.exist?(networks_path) ? File.readlines(networks_path, chomp: true).to_h(&:split) : {}
     proxy_path = ENV.fetch('DOCKER_PROXY')
+    # Sandboxes on sndbx-internal, a name, address and start time per line
+    sandboxes_path = ENV.fetch('DOCKER_SANDBOXES')
+    sandboxes = File.exist?(sandboxes_path) ? File.readlines(sandboxes_path, chomp: true).map(&:split) : []
 
     case ARGV
     in ['info']
@@ -36,6 +39,8 @@ class SndbxTestCase < Minitest::Test
     in ['image', 'inspect', '--format', '{{.Config.User}}', tag]
       exit(false) unless images.key?(tag)
       puts images[tag]
+    in ['ps', '--filter', 'network=sndbx-internal', '--format', '{{.Names}}']
+      sandboxes.each { |name, _ip, _started| puts name }
     in ['ps', *filters, '--format', '{{.Names}}']
       status = filters.find { |arg| arg.start_with?('status=') }&.delete_prefix('status=')
       status ||= 'running' unless filters.include?('--all')
@@ -60,6 +65,14 @@ class SndbxTestCase < Minitest::Test
       exit(false) unless File.exist?(proxy_path)
       running, restarting, image, mount, *networks = File.read(proxy_path).split
       puts running, restarting, image, networks.join(' '), mount
+    in ['container', 'inspect', '--format', _, *names]
+      sandboxes.each do |name, ip, started|
+        puts "/\#{name} \#{started} bridge=172.17.0.9 sndbx-internal=\#{ip}" if names.include?(name)
+      end
+    in ['exec', 'sndbx-proxy', 'tail', *]
+      access_log_path = ENV.fetch('DOCKER_ACCESS_LOG')
+      print File.read(access_log_path) if File.exist?(access_log_path)
+      exit(false) if ENV['DOCKER_BROKEN'] == 'tail'
     in ['run', '-d', '--name', 'sndbx-proxy', *]
       exit(false) if ENV['DOCKER_BROKEN'] == 'sndbx-proxy'
       mount = ARGV[ARGV.index('-v') + 1].split(':').first
@@ -95,6 +108,8 @@ class SndbxTestCase < Minitest::Test
     @docker_containers = File.join(@root, 'docker-containers')
     @docker_networks = File.join(@root, 'docker-networks')
     @docker_proxy = File.join(@root, 'docker-proxy')
+    @docker_sandboxes = File.join(@root, 'docker-sandboxes')
+    @docker_access_log = File.join(@root, 'docker-access-log')
 
     write_executable(File.join(@bin, 'docker'), FAKE_DOCKER)
   end
@@ -108,7 +123,9 @@ class SndbxTestCase < Minitest::Test
       'DOCKER_IMAGES' => @docker_images,
       'DOCKER_CONTAINERS' => @docker_containers,
       'DOCKER_NETWORKS' => @docker_networks,
-      'DOCKER_PROXY' => @docker_proxy
+      'DOCKER_PROXY' => @docker_proxy,
+      'DOCKER_SANDBOXES' => @docker_sandboxes,
+      'DOCKER_ACCESS_LOG' => @docker_access_log
     }.merge(env))
   end
 

@@ -3,7 +3,7 @@ use std::io::{IsTerminal, Write};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 
 use anyhow::{Context, bail};
 
@@ -117,6 +117,57 @@ pub fn container_state(name: &str) -> Option<ContainerState> {
     })
 }
 
+/// A running container's address on a network
+#[derive(Clone, Debug, PartialEq)]
+pub struct NetworkContainer {
+    pub name: String,
+    pub ip: String,
+    pub started: jiff::Timestamp,
+}
+
+/// The name, start time and a `NETWORK=IP` field per network, as names and addresses have no spaces
+const NETWORK_CONTAINER_FORMAT: &str = "{{.Name}} {{.State.StartedAt}}\
+                                        {{range $name, $network := .NetworkSettings.Networks}} \
+                                        {{$name}}={{$network.IPAddress}}{{end}}";
+/// Between a network and the container's address on it
+const NETWORK_IP_SEPARATOR: char = '=';
+/// Before the names `inspect` prints
+const NAME_PREFIX: char = '/';
+
+/// Empty if docker fails, leaving out containers that stop meanwhile
+pub fn network_containers(network: &str) -> Vec<NetworkContainer> {
+    let names = containers(&["--filter", &format!("network={network}")]).unwrap_or_default();
+    if names.is_empty() {
+        return Vec::new();
+    }
+    let mut args = vec!["container", "inspect", "--format", NETWORK_CONTAINER_FORMAT];
+    args.extend(names.iter().map(String::as_str));
+    // Docker fails when a container is gone, but still prints the others
+    let Some(output) = output_even_if_failed(&args) else {
+        return Vec::new();
+    };
+    output
+        .lines()
+        .filter_map(|line| parse_network_container(line, network))
+        .collect()
+}
+
+/// A line of `NETWORK_CONTAINER_FORMAT`, `None` without an address on the network
+fn parse_network_container(line: &str, network: &str) -> Option<NetworkContainer> {
+    let mut fields = line.split_whitespace();
+    let name = fields.next()?.trim_start_matches(NAME_PREFIX);
+    let started = fields.next()?.parse().ok()?;
+    let ip = fields
+        .filter_map(|field| field.split_once(NETWORK_IP_SEPARATOR))
+        .find(|(name, ip)| *name == network && !ip.is_empty())?
+        .1;
+    Some(NetworkContainer {
+        name: name.to_string(),
+        ip: ip.to_string(),
+        started,
+    })
+}
+
 pub fn running_containers(image: &str) -> Result<Vec<String>> {
     containers(&["--filter", &label_filter(image)])
 }
@@ -177,14 +228,34 @@ pub fn exec<S: AsRef<str>>(args: &[S]) -> Result<()> {
 }
 
 pub fn exec_until_interrupted(container: &str, command: &[&str]) -> Result<()> {
-    // -t makes Ctrl-C stop the command in the container too, but would end piped lines in \r\n
+    exec(&exec_args(container, command))
+}
+
+/// Like `exec_until_interrupted`, with the command's output piped to sndbx. With -t it ends lines in \r\n, and
+/// docker turns off the terminal's own \n to \r\n while it runs.
+pub fn spawn_until_interrupted(container: &str, command: &[&str]) -> Result<Child> {
+    let args = exec_args(container, command);
+    prepare(&args);
+    docker_command(&args)
+        .stdout(Stdio::piped())
+        .spawn()
+        .context(format!("can't run {DOCKER}"))
+}
+
+/// Whether `exec_until_interrupted` and `spawn_until_interrupted` run the command with -t, which makes Ctrl-C stop
+/// it in the container too, but would end piped lines in \r\n
+pub fn exec_uses_terminal() -> bool {
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+}
+
+fn exec_args<'a>(container: &'a str, command: &[&'a str]) -> Vec<&'a str> {
     let mut args = vec!["exec"];
-    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
+    if exec_uses_terminal() {
         args.push("-it");
     }
     args.push(container);
     args.extend(command);
-    exec(&args)
+    args
 }
 
 pub fn run<S: AsRef<str>>(args: &[S]) -> bool {
@@ -248,11 +319,22 @@ fn log_command<S: AsRef<str>>(args: &[S]) {
 
 /// Stdout, `None` if docker failed or can't run
 fn output(args: &[&str]) -> Option<String> {
-    let output = docker_command(args).stderr(Stdio::null()).output().ok()?;
-    output
-        .status
-        .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+    let output = quiet_output(args)?;
+    output.status.success().then(|| stdout_text(&output))
+}
+
+/// Stdout even if docker failed, `None` if it can't run
+fn output_even_if_failed(args: &[&str]) -> Option<String> {
+    quiet_output(args).map(|output| stdout_text(&output))
+}
+
+/// Without stderr, `None` if docker can't run
+fn quiet_output(args: &[&str]) -> Option<Output> {
+    docker_command(args).stderr(Stdio::null()).output().ok()
+}
+
+fn stdout_text(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
 /// `None` if docker can't run

@@ -331,7 +331,7 @@ dependencies = [
 
 [[package]]
 name = "sndbx"
-version = "0.40.1"
+version = "0.41.3"
 dependencies = [
  "anyhow",
  "clap",

@@ -70,7 +70,7 @@ fn follows_the_last_matching_lines_then_new_ones() {
             "sh",
             "2",
             log.to_str().unwrap(),
-            DENIED,
+            &denied_text(),
         ])
         .stdout(Stdio::piped())
         .process_group(0)
