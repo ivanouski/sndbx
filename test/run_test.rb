@@ -352,6 +352,21 @@ class RunTest < SndbxTestCase
                  docker_calls.last
   end
 
+  def test_run_expands_home_in_path_flags_of_the_docker_args
+    write_settings(
+      docker_args: ['--env-file=~/top.env'],
+      images: [{ name: 'claude', user: 'ubuntu', docker_args: ['--env-file', '~/image.env', '-e', 'FOO=~/x'] }]
+    )
+    add_docker_image('sndbx:claude')
+
+    sndbx('run', 'claude', '--', '--env-file=~/run.env')
+
+    assert_equal [*run_options('project'), *volume('project'), *config_volume, *TERMINAL_ENV,
+                  "--env-file=#{@home}/top.env", '--env-file', "#{@home}/image.env", '-e', 'FOO=~/x',
+                  '--env-file=~/run.env', 'sndbx:claude'],
+                 docker_calls.last
+  end
+
   def test_run_uses_image_tag
     write_settings(images: [{ name: 'claude', user: 'ubuntu', tag: 'my-claude:latest' }])
     add_docker_image('my-claude:latest')

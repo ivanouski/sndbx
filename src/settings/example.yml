@@ -1,6 +1,7 @@
 # tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
 # images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to the images/ sndbx was built with
 # optional, docker run arguments for every image, before the image's own; these two harden the sandbox, see the README
+# ~/ expands in the paths of --env-file, --label-file, -v, --volume and --mount's source
 docker_args: ['--security-opt=no-new-privileges', '--pids-limit=4096']
 # optional, runs sandboxes behind a proxy that lets through only the hosts in ~/.config/sndbx/allowed_hosts, or every one, see the README
 # proxy:
