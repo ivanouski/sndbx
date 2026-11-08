@@ -180,7 +180,7 @@ setfacl -R -m u:1000:rwX,d:u:1000:rwX ~/src/my-project
 | `cursor`   | `/home/ubuntu/.cursor`          | runs without its own sandbox, see below |
 | `dsh`      | `/home/ubuntu/.dsh`             | web UI on port 3080, see below          |
 
-All are built on `sndbx:base`: Ubuntu with node, pnpm, python, ruby, rust, uv and postgres via mise, and Playwright with headless Chromium.
+All are built on `sndbx:base`: a minimal Ubuntu with [mise](https://mise.jdx.dev), which the agent can use to install the tools a project needs. For anything else every sandbox should have, edit `images/base/Dockerfile` and rebuild with `sndbx build -b claude`.
 
 **opencode:** `images/opencode/opencode/opencode.json` is an example config for Ollama on the host; copy it into opencode's config directory. On Linux, Ollama must listen beyond loopback, e.g. `OLLAMA_HOST=0.0.0.0 ollama serve`.
 
