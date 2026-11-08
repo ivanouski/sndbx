@@ -45,24 +45,46 @@ def release_binary(target)
   "target/#{target}/release/sndbx"
 end
 
+def dist_linux
+  # Rust's bundled linker links musl binaries without a C cross toolchain
+  env = LINUX_DIST.keys.to_h { |target| ["CARGO_TARGET_#{target.upcase.tr('-', '_')}_LINKER", 'rust-lld'] }
+  release_build(LINUX_DIST.keys, env)
+  LINUX_DIST.each { |target, asset| cp release_binary(target), "dist/#{asset}" }
+end
+
+def dist_macos
+  abort 'dist:macos needs macOS for its SDK and lipo' unless MACOS
+  release_build(MACOS_TARGETS)
+  sh 'lipo', '-create', '-output', 'dist/sndbx-macos', *MACOS_TARGETS.map { |target| release_binary(target) }
+end
+
+# The binaries a task didn't build may be from an older version
+def warn_stale
+  stale = Dir['dist/*'].select { |asset| File.mtime(asset) < File.mtime('Cargo.toml') }
+  warn "Older than Cargo.toml, rebuild them: #{stale.join(', ')}" unless stale.empty?
+end
+
 namespace :dist do
   desc 'Build static Linux binaries into dist/'
   task :linux do
-    # Rust's bundled linker links musl binaries without a C cross toolchain
-    env = LINUX_DIST.keys.to_h { |target| ["CARGO_TARGET_#{target.upcase.tr('-', '_')}_LINKER", 'rust-lld'] }
-    release_build(LINUX_DIST.keys, env)
-    LINUX_DIST.each { |target, asset| cp release_binary(target), "dist/#{asset}" }
+    dist_linux
+    warn_stale
   end
 
   desc 'Build a universal macOS binary into dist/ (on macOS only)'
   task :macos do
-    abort 'dist:macos needs macOS for its SDK and lipo' unless MACOS
-    release_build(MACOS_TARGETS)
-    sh 'lipo', '-create', '-output', 'dist/sndbx-macos', *MACOS_TARGETS.map { |target| release_binary(target) }
+    dist_macos
+    warn_stale
   end
 end
 
 desc 'Build release binaries into dist/: Linux, and macOS when run on a Mac'
-task dist: MACOS ? %w[dist:linux dist:macos] : %w[dist:linux] do
-  puts 'Skipped dist:macos, it needs macOS' unless MACOS
+task :dist do
+  dist_linux
+  if MACOS
+    dist_macos
+  else
+    puts 'Skipped dist:macos, it needs macOS'
+  end
+  warn_stale
 end
