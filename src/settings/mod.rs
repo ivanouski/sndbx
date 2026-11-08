@@ -14,8 +14,11 @@ pub use edit::{Added, NewEntry, add_image, comment_out_image};
 
 pub const IMAGES_DIR_SETTING: &str = "images_dir";
 const DEFAULT_TAG_PREFIX: &str = "sndbx";
-// The images directory of the repo this binary was built from
-const REPO_IMAGES_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/images");
+// The images directory sndbx was built with: SNDBX_IMAGES_DIR at build time, e.g. a package's, or the repo's
+const BUILT_IN_IMAGES_DIR: &str = match option_env!("SNDBX_IMAGES_DIR") {
+    Some(dir) => dir,
+    None => concat!(env!("CARGO_MANIFEST_DIR"), "/images"),
+};
 
 const EXAMPLE: &str = include_str!("example.yml");
 
@@ -213,7 +216,7 @@ impl Settings {
     pub fn images_dir(&self) -> PathBuf {
         match self.file.images_dir.as_deref() {
             Some(images_dir) => expand_path(images_dir, Some(&dir())),
-            None => expand_path(REPO_IMAGES_DIR, None),
+            None => expand_path(BUILT_IN_IMAGES_DIR, None),
         }
     }
 

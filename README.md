@@ -11,7 +11,15 @@ The repo has Dockerfiles for Claude Code, opencode, Codex, Cursor and dsh, see [
 
 ## Install
 
-Download the binary for your platform from the [latest release](https://github.com/ivanouski/sndbx/releases/latest) into a directory in `PATH`:
+With [Homebrew](https://brew.sh), on macOS or Linux. It builds sndbx from source and installs the images and shell completion too, so `sndbx build` needs no setting:
+
+```sh
+brew install ivanouski/tap/sndbx
+```
+
+Brew replaces its copy of `images/` on every upgrade, so for images of your own, set `images_dir` to a directory of yours, see [Configure](#configure).
+
+Or download the binary for your platform from the [latest release](https://github.com/ivanouski/sndbx/releases/latest) into a directory in `PATH`:
 
 ```sh
 asset=sndbx-macos   # or sndbx-linux-x86_64, sndbx-linux-arm64
@@ -76,7 +84,7 @@ Settings live in `~/.config/sndbx/settings.yml` (`$XDG_CONFIG_HOME/sndbx/` if se
 
 ```yaml
 tag_prefix: sndbx # optional, images are tagged <tag_prefix>:<name>
-images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to this repo's images/
+images_dir: ~/src/sndbx/images # optional, where build finds images, defaults to the images/ sndbx was built with
 docker_args: ["--security-opt=no-new-privileges", "--pids-limit=4096"] # optional, docker run arguments for every image
 proxy: # optional, turns the proxy on
   image: ubuntu/squid@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
