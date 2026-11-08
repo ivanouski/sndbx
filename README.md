@@ -107,6 +107,7 @@ images:
 
 - **Hardening:** `no-new-privileges` keeps the agent from gaining root through `sudo` or `su`; `sndbx exec -u root` still works. `--pids-limit` contains fork bombs; raise it if builds fail with "Resource temporarily unavailable".
 - **`docker_args` order:** top-level, the image's, then `run -- ...`. The last value of a flag like `--memory` wins; flags like `-e` add up.
+- **`~` in `docker_args`:** a leading `~/` becomes your home in the host paths of `--env-file`, `--label-file`, `-v`, `--volume` and `--mount`'s `source`, like `--env-file=~/.config/sndbx/deepseek.env`. Other values keep it, since `-e FOO=~/x` may mean the container's home. Nothing else is expanded, not `$HOME` either; after `run --` the shell expands, so use `"$HOME/..."` there.
 
 ## Network proxy
 

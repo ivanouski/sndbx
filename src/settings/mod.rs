@@ -160,13 +160,10 @@ impl Settings {
             config_target,
             ports: entry.ports.clone(),
             // Later arguments win in docker, so the image's override the top-level ones
-            docker_args: self
-                .file
-                .docker_args
-                .iter()
-                .chain(&entry.docker_args)
-                .cloned()
-                .collect(),
+            docker_args: expand_home_in_args(
+                self.file.docker_args.iter().chain(&entry.docker_args),
+                &paths::home(),
+            ),
             proxy: entry.proxy.unwrap_or(true),
         })
     }
@@ -272,6 +269,74 @@ fn validate(content: &str, path: &Path) -> Result<Settings> {
 /// The default tag, `<tag_prefix>:<name>`
 pub fn tag(tag_prefix: &str, name: &str) -> String {
     format!("{tag_prefix}:{name}")
+}
+
+/// Where a docker run flag's value has a host path
+#[derive(Clone, Copy)]
+enum PathIn {
+    /// The whole value, like `--env-file`'s
+    Value,
+    /// Before the first `:`, like `-v`'s; without one, the value is a container path
+    VolumeSource,
+    /// In the `source` or `src` field, like `--mount`'s
+    MountSource,
+}
+
+fn path_flag(flag: &str) -> Option<PathIn> {
+    match flag {
+        "--env-file" | "--label-file" => Some(PathIn::Value),
+        "-v" | "--volume" => Some(PathIn::VolumeSource),
+        "--mount" => Some(PathIn::MountSource),
+        _ => None,
+    }
+}
+
+/// Expands a leading `~/` in the host paths of the flags `path_flag` knows, as `--flag=value` or `--flag value`;
+/// others, like `-e FOO=~/x`, may mean the container's home
+fn expand_home_in_args<'a>(args: impl IntoIterator<Item = &'a String>, home: &Path) -> Vec<String> {
+    let mut expanded = Vec::new();
+    let mut value_of = None;
+    for arg in args {
+        let arg = if let Some(path_in) = value_of.take() {
+            expand_home_in_value(arg, path_in, home)
+        } else if let Some(path_in) = path_flag(arg) {
+            value_of = Some(path_in);
+            arg.clone()
+        } else if let Some((flag, value)) = arg.split_once('=')
+            && let Some(path_in) = path_flag(flag)
+        {
+            format!("{flag}={}", expand_home_in_value(value, path_in, home))
+        } else {
+            arg.clone()
+        };
+        expanded.push(arg);
+    }
+    expanded
+}
+
+fn expand_home_in_value(value: &str, path_in: PathIn, home: &Path) -> String {
+    match path_in {
+        PathIn::Value => expand_home(value, home),
+        PathIn::VolumeSource if value.contains(':') => expand_home(value, home),
+        PathIn::VolumeSource => value.to_string(),
+        PathIn::MountSource => value
+            .split(',')
+            .map(|field| match field.split_once('=') {
+                Some((key @ ("source" | "src"), path)) => {
+                    format!("{key}={}", expand_home(path, home))
+                }
+                _ => field.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join(","),
+    }
+}
+
+fn expand_home(value: &str, home: &Path) -> String {
+    match value.strip_prefix("~/") {
+        Some(rest) => home.join(rest).display().to_string(),
+        None => value.to_string(),
+    }
 }
 
 /// Only the first document, the default when there's none or it's empty
