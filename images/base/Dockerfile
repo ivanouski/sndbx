@@ -20,9 +20,9 @@ ENTRYPOINT ["/usr/bin/tini", "--"]
 FROM system AS tools
 
 ARG USER=ubuntu
-ARG NODE_VERSION=26.9.0
-ARG PYTHON_VERSION=3.14.7
-ARG RUBY_VERSION=4.0.7
+ARG NODE_VERSION=26.13.0
+ARG PYTHON_VERSION=3.15.2
+ARG RUBY_VERSION=4.0.9
 ARG RUST_VERSION=1.99
 ARG POSTGRES_VERSION=18.6
 # sndbx passes the host user's on Linux, so the agent can write to the mounts
