@@ -86,6 +86,24 @@ class RunTest < SndbxTestCase
     assert_empty docker_runs
   end
 
+  def test_run_mounts_an_absolute_config_target_outside_the_home
+    write_settings(images: [{ name: 'claude', config_target: '/opt/claude' }])
+    add_docker_image('sndbx:claude', user: '1000:1000')
+
+    sndbx('run', 'claude')
+
+    assert_equal ['-v', "#{default_config_dir}:/opt/claude"], docker_calls.last[-6..-5]
+  end
+
+  def test_run_refuses_a_volume_at_the_config_target
+    write_settings(images: [{ name: 'claude', config_target: '/opt/claude/' }])
+    add_docker_image('sndbx:claude')
+
+    assert_error 'the config directory and a volume are both mounted at /opt/claude',
+                 sndbx('run', 'claude', '-v', '.:/opt/claude')
+    assert_empty docker_runs
+  end
+
   def test_run_with_volumes_starts_in_the_last_one
     write_claude_settings
     api = mkdir('work/api')

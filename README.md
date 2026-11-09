@@ -71,7 +71,7 @@ sndbx logs proxy -p                                   # with sandbox names, loca
 
 - builds the image if it's missing and `images_dir` has a Dockerfile for it; pull or build other images yourself
 - mounts `-v` paths without a destination, and the current directory, at `/workspace/<basename>`
-- mounts the image's config directory at `<config_target>` in the container user's home
+- mounts the image's config directory at `<config_target>`, in the container user's home unless it's absolute
 - passes `COLORTERM`, `TERM_PROGRAM` and `TERM_PROGRAM_VERSION` from the host
 - labels the container `sndbx.image=<name>`, which `exec`, `resume` and `list` find it by
 - names the container after the starting directory, `my-project`, then `my-project-1`, … Other characters than letters, digits, `_` and `-` become `-`. Override with `-- --name=<name>`.
@@ -92,9 +92,9 @@ proxy: # optional, turns the proxy on
 images:
   - name: claude
     tag: my-claude:latest # optional, defaults to <tag_prefix>:<name>
-    user: ubuntu # optional, only needed for an image that runs as a numeric uid
+    user: ubuntu # optional, only needed for an image that runs as a numeric uid with a relative config_target
     config_dir: ~/.claude_docker # optional, defaults to ~/.config/sndbx/<name>
-    config_target: .claude # optional, relative to the user's home, defaults to .<name>
+    config_target: .claude # optional, relative to the user's home or absolute, defaults to .<name>
     docker_args: ["--memory=8g"] # optional, after the top-level ones
   - name: opencode
     config_target: .config/opencode

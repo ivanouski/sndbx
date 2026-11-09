@@ -7,6 +7,11 @@ use anyhow::{Context, bail};
 
 use crate::Result;
 
+/// `~`, the home directory at the start of a path
+pub const HOME_SHORTHAND: &str = "~";
+/// `~/`, the start of a path in the home; in `docker_args` only this form expands
+pub const HOME_PREFIX: &str = "~/";
+
 pub fn home() -> PathBuf {
     std::env::home_dir().unwrap_or_default()
 }
@@ -53,7 +58,7 @@ pub fn current_dir() -> PathBuf {
 /// Expands `~`, resolves against `base` or the current directory, and normalizes without following symlinks
 pub fn expand_path(path: impl AsRef<Path>, base: Option<&Path>) -> PathBuf {
     let path = path.as_ref();
-    let absolute = match path.strip_prefix("~") {
+    let absolute = match path.strip_prefix(HOME_SHORTHAND) {
         Ok(rest) => home().join(rest),
         Err(_) => base
             .map_or_else(current_dir, |base| expand_path(base, None))
@@ -75,6 +80,11 @@ pub fn normalize(path: &Path) -> PathBuf {
         }
     }
     normalized
+}
+
+/// For container paths, which are `String`s; host paths have `Path::is_absolute`
+pub fn is_absolute(path: &str) -> bool {
+    path.starts_with('/')
 }
 
 /// One slash between parts, like `/a/b` for `/a/` and `/b`

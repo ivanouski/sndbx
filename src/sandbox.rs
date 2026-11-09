@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, bail};
 
 use crate::docker::{self, IMAGE_LABEL, image_user};
-use crate::paths::{expand_path, is_same_file, join, normalize};
+use crate::paths::{expand_path, is_absolute, is_same_file, join, normalize};
 use crate::proxy::{self, Proxy};
 use crate::settings::{self, Image};
 use crate::{Result, paths, print_status, unique};
@@ -13,6 +13,8 @@ use crate::{Result, paths, print_status, unique};
 pub const MOUNT_ROOT: &str = "/workspace";
 const HOME_ROOT: &str = "/home";
 const ROOT_HOME: &str = "/root";
+/// Between the ports and the protocol in `-p`, like `53/udp`
+const PROTOCOL_SEPARATOR: char = '/';
 // Passed through from the host, what tools tell the terminal's colors and features by; docker sets TERM itself
 const TERMINAL_ENV: [&str; 3] = ["COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"];
 
@@ -80,6 +82,13 @@ impl Sandbox {
     /// Expects docker checked and the image built
     pub fn run(&self) -> Result<()> {
         let config_target = self.config_target()?;
+        if self
+            .volumes
+            .iter()
+            .any(|volume| volume.target == config_target)
+        {
+            bail!("the config directory and a volume are both mounted at {config_target}");
+        }
         std::fs::create_dir_all(&self.image.config_dir)?;
         if let Some(proxy) = &self.proxy {
             proxy::ensure(proxy)?;
@@ -150,8 +159,12 @@ impl Sandbox {
         specs
     }
 
-    /// In the home of the configured or the image's user; fails if the image doesn't exist
+    /// Normalized like volume targets; absolute ones directly, else in the home of the configured or the image's
+    /// user; fails if that's needed and the image doesn't exist
     fn config_target(&self) -> Result<String> {
+        if is_absolute(&self.image.config_target) {
+            return Ok(container_path(&self.image.config_target));
+        }
         let Some(image_user) = image_user(&self.image.tag) else {
             bail!("docker image '{}' does not exist", self.image.tag);
         };
@@ -163,7 +176,7 @@ impl Sandbox {
                 settings::path().display()
             );
         };
-        Ok(join(&[&home, &self.image.config_target]))
+        Ok(container_path(&join(&[&home, &self.image.config_target])))
     }
 }
 
@@ -315,7 +328,7 @@ fn parse_volume(spec: &str) -> Result<Volume> {
     }
 
     let target = if let Some(target) = parts.get(1) {
-        if !target.starts_with('/') {
+        if !is_absolute(target) {
             bail!("invalid volume '{spec}', DST must be an absolute path");
         }
         container_path(target)
@@ -335,7 +348,7 @@ fn parse_volume(spec: &str) -> Result<Volume> {
 }
 
 fn workdir_target(name: &str) -> String {
-    if name.starts_with('/') {
+    if is_absolute(name) {
         container_path(name)
     } else {
         mount_target(name)
@@ -356,7 +369,7 @@ fn is_in_workspace(target: &str) -> bool {
 fn normalize_port(spec: &str) -> Result<String> {
     let invalid = || anyhow!("invalid port '{spec}', expected PORT or HOST:CONTAINER");
 
-    let (numbers, protocol) = match spec.split_once('/') {
+    let (numbers, protocol) = match spec.split_once(PROTOCOL_SEPARATOR) {
         None => (spec, None),
         Some((numbers, protocol @ ("tcp" | "udp"))) => (numbers, Some(protocol)),
         Some(_) => return Err(invalid()),
