@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Context, anyhow, bail};
 
 use crate::docker::{self, check_docker, image_exists};
+use crate::paths::HOME_PREFIX;
 use crate::settings::{self, Added, IMAGES_DIR_SETTING, Image, NewEntry, Settings};
 use crate::{Result, paths, print_status, unique};
 
@@ -186,8 +187,9 @@ impl Builder {
             String::new()
         } else {
             format!(
-                ", set config_target there or in {} if {name} doesn't keep its config in ~/.{name}",
-                self.entry_file(name).display()
+                ", set config_target there or in {} if {name} doesn't keep its config in {HOME_PREFIX}{}",
+                self.entry_file(name).display(),
+                settings::default_config_target(name)
             )
         };
         match settings::add_image(entry) {

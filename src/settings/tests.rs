@@ -182,3 +182,29 @@ fn only_strings() {
         );
     }
 }
+
+#[test]
+fn config_targets() {
+    for valid in [
+        ".claude",
+        ".config/opencode",
+        "/opt/claude",
+        "a..b/.x",
+        "~foo",
+    ] {
+        assert_eq!(config_target_problem(valid), None, "{valid}");
+    }
+    for invalid in [
+        "",
+        "/",
+        "//",
+        "/.",
+        "~",
+        "~/.claude",
+        "../x",
+        ".claude/../..",
+        "/opt/../etc",
+    ] {
+        assert!(config_target_problem(invalid).is_some(), "{invalid:?}");
+    }
+}

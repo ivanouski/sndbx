@@ -9,10 +9,10 @@ docker_args: ['--security-opt=no-new-privileges', '--pids-limit=4096']
 #   allow: listed # optional, all lets every host through, to watch what sandboxes reach without limiting it
 images:
   - name: claude
-    # user: ubuntu # optional, whose home config_target is in, defaults to the user the image runs as
+    # user: ubuntu # optional, whose home a relative config_target is in, defaults to the user the image runs as
     # tag: my-claude:latest # optional, defaults to <tag_prefix>:<name>
     # config_dir: ~/.claude_docker # optional, relative paths resolve against ~/.config/sndbx, defaults to ~/.config/sndbx/<name>
-    # config_target: .claude # optional, relative to the user's home, defaults to .<name>
+    # config_target: .claude # optional, relative to the user's home or absolute, defaults to .<name>
     # ports: ['3000'] # optional, always published; quote them
     # docker_args: ['--memory=8g'] # optional, extra docker run arguments, after the top-level ones
     # proxy: false # optional, keeps the image off the proxy

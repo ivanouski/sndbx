@@ -82,7 +82,13 @@ class SettingsTest < SndbxTestCase
   def test_config_dir_must_not_be_empty
     write_settings(images: [{ name: 'claude', user: 'ubuntu', config_dir: '' }])
 
-    assert_error "image 'claude' has a config_dir that isn't a path in #{settings_path}", sndbx('run', 'claude')
+    assert_error "image 'claude' in #{settings_path} has a config_dir that isn't a path", sndbx('run', 'claude')
+  end
+
+  def test_config_target_must_be_usable
+    write_settings(images: [{ name: 'claude', user: 'ubuntu', config_target: '../etc' }])
+
+    assert_error "image 'claude' in #{settings_path} has a config_target that has a .. part", sndbx('run', 'claude')
   end
 
   def test_settings_under_xdg_config_home

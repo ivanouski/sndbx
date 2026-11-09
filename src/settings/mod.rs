@@ -1,19 +1,21 @@
 mod de;
 mod edit;
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, bail};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
-use crate::paths::expand_path;
+use crate::paths::{HOME_PREFIX, HOME_SHORTHAND, expand_path};
 use crate::{Abort, Result, paths};
 use de::{optional_text, or_default, strings, text};
 pub use edit::{Added, NewEntry, add_image, comment_out_image};
 
 pub const IMAGES_DIR_SETTING: &str = "images_dir";
 const DEFAULT_TAG_PREFIX: &str = "sndbx";
+/// What docker allows between the lowercase alphanumeric words of a repository name
+const TAG_PREFIX_SEPARATORS: [char; 4] = ['.', '_', '-', '/'];
 // The images directory sndbx was built with: SNDBX_IMAGES_DIR at build time, e.g. a package's, or the repo's
 const BUILT_IN_IMAGES_DIR: &str = match option_env!("SNDBX_IMAGES_DIR") {
     Some(dir) => dir,
@@ -36,7 +38,7 @@ pub struct Image {
     pub config_dir: PathBuf,
     /// Overrides the image's user
     pub user: Option<String>,
-    /// Relative to the user's home
+    /// Absolute, or relative to the user's home
     pub config_target: String,
     pub ports: Vec<String>,
     pub docker_args: Vec<String>,
@@ -142,7 +144,7 @@ impl Settings {
         let config_dir = match entry.config_dir.as_deref() {
             None => name,
             Some("") => bail!(
-                "image '{name}' has a config_dir that isn't a path in {}",
+                "image '{name}' in {} has a config_dir that isn't a path",
                 path().display()
             ),
             Some(dir) => dir,
@@ -150,7 +152,13 @@ impl Settings {
         let config_target = entry
             .config_target
             .clone()
-            .unwrap_or_else(|| format!(".{name}"));
+            .unwrap_or_else(|| default_config_target(name));
+        if let Some(problem) = config_target_problem(&config_target) {
+            bail!(
+                "image '{name}' in {} has a config_target that {problem}",
+                path().display()
+            );
+        }
 
         Ok(Image {
             name: name.to_string(),
@@ -333,7 +341,7 @@ fn expand_home_in_value(value: &str, path_in: PathIn, home: &Path) -> String {
 }
 
 fn expand_home(value: &str, home: &Path) -> String {
-    match value.strip_prefix("~/") {
+    match value.strip_prefix(HOME_PREFIX) {
         Some(rest) => home.join(rest).display().to_string(),
         None => value.to_string(),
     }
@@ -351,6 +359,27 @@ fn parse(content: &str) -> Result<File, serde_norway::Error> {
     first_document(content)
 }
 
+/// In the user's home, where tools keep their config by default
+pub fn default_config_target(name: &str) -> String {
+    format!(".{name}")
+}
+
+/// Why a `config_target` can't be meant, `None` if it's fine
+fn config_target_problem(target: &str) -> Option<&'static str> {
+    let path = Path::new(target);
+    if target.is_empty() {
+        Some("isn't a path")
+    } else if path.components().eq([Component::RootDir]) {
+        Some("is /, which docker can't mount over")
+    } else if path.starts_with(HOME_SHORTHAND) {
+        Some("starts with ~, drop ~/ as it's relative to the user's home already")
+    } else if path.components().any(|part| part == Component::ParentDir) {
+        Some("has a .. part")
+    } else {
+        None
+    }
+}
+
 /// No whitespace, and no leading `-` that would make it an option
 fn is_valid_image(image: &str) -> bool {
     !image.is_empty() && !image.starts_with('-') && !image.contains(char::is_whitespace)
@@ -358,7 +387,7 @@ fn is_valid_image(image: &str) -> bool {
 
 /// Lowercase alphanumeric words joined by single `.`, `_`, `-` or `/`, like `sndbx` or `my.org/sndbx`
 fn is_valid_tag_prefix(prefix: &str) -> bool {
-    prefix.split(['.', '_', '-', '/']).all(|word| {
+    prefix.split(TAG_PREFIX_SEPARATORS).all(|word| {
         !word.is_empty()
             && word
                 .bytes()
