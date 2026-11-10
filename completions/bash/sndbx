@@ -80,7 +80,7 @@ _sndbx_docker_args() {
 }
 
 # Adds the workdir names for the volume SRC[:DST[:OPTS]] in $1 to the caller's workdirs,
-# and sets its has_workspace when the volume is in the workspace
+# and sets its has_workspace when the volume is in the workspace, as one without DST is even with --host-paths
 _sndbx_add_workdir() {
   local value="${1//[\"\']/}" dir target=""
 
@@ -156,7 +156,7 @@ _sndbx_run() {
     p) ;;
     *)
       if [[ "${cur}" == -* ]]; then
-        _sndbx_reply '-v --volume -w --workdir -p --publish -k --keep -h --help'
+        _sndbx_reply '-v --volume -w --workdir -p --publish -k --keep --host-paths -h --help'
       elif (( ! has_image )); then
         _sndbx_reply_list configured
       fi

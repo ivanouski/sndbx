@@ -113,6 +113,22 @@ fn leaves_other_args_be() {
 }
 
 #[test]
+fn host_paths() {
+    let host_paths =
+        |content: &str| parse(content).map(|file| file.images.unwrap().remove(0).host_paths);
+    assert_eq!(host_paths("images:\n  - name: a\n").unwrap(), None);
+    assert_eq!(
+        host_paths("images:\n  - name: a\n    host_paths: true\n").unwrap(),
+        Some(true)
+    );
+    let message = host_paths("images:\n  - name: a\n    host_paths: always\n")
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(message.contains("images[0].host_paths"), "{message}");
+}
+
+#[test]
 fn proxies() {
     let proxy = |content| parse(content).unwrap().proxy;
     assert_eq!(proxy("images: []\n"), None);

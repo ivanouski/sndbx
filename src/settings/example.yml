@@ -15,4 +15,5 @@ images:
     # config_target: .claude # optional, relative to the user's home or absolute, defaults to .<name>
     # ports: ['3000'] # optional, always published; quote them
     # docker_args: ['--memory=8g'] # optional, extra docker run arguments, after the top-level ones
+    # host_paths: true # optional, as if run always had --host-paths: mounts volumes without a destination at their host path
     # proxy: false # optional, keeps the image off the proxy

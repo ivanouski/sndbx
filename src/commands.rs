@@ -46,7 +46,7 @@ enum Commands {
         override_usage = "sndbx run IMAGE [options] [-- DOCKER_ARGS]",
         before_help = format!(
             "Runs a sandboxed image from {}.\n\
-             Mounts the current directory unless a volume is mounted in {MOUNT_ROOT}.\n\
+             Mounts the current directory unless a volume has no DST or one in {MOUNT_ROOT}.\n\
              Passes DOCKER_ARGS to docker run after the docker_args in the settings.\n\
              Builds the image first if it doesn't exist and `{IMAGES_DIR_SETTING}` has a Dockerfile for its tag; \
              pull or build any other image yourself.",
@@ -120,7 +120,9 @@ struct Run {
         long = "volume",
         value_name = "SRC[:DST[:OPTS]]",
         allow_hyphen_values = true,
-        help = format!("Mount SRC at DST, {MOUNT_ROOT}/<basename> by default, with docker's OPTS, e.g. ro, repeatable")
+        help = format!(
+            "Mount SRC at DST, {MOUNT_ROOT}/<basename> by default, or SRC with --host-paths, with docker's OPTS, e.g. ro, repeatable"
+        )
     )]
     volumes: Vec<String>,
 
@@ -130,7 +132,8 @@ struct Run {
         value_name = "NAME",
         allow_hyphen_values = true,
         help = format!(
-            "Start in {MOUNT_ROOT}/<NAME>, or NAME if it's absolute, the last directory volume in {MOUNT_ROOT} by default"
+            "Start in {MOUNT_ROOT}/<NAME>, the volume of that basename with --host-paths, or NAME if it's absolute; \
+             the last directory volume without a DST or in {MOUNT_ROOT} by default"
         )
     )]
     workdir: Option<String>,
@@ -147,6 +150,15 @@ struct Run {
     /// Keep the container after it exits, docker run's --rm otherwise removes it
     #[arg(short, long)]
     keep: bool,
+
+    #[arg(
+        long,
+        help = format!(
+            "Mount volumes without a DST, and the current directory, at their host path rather than in {MOUNT_ROOT}, \
+             like host_paths: true in the settings"
+        )
+    )]
+    host_paths: bool,
 
     /// More docker run arguments
     #[arg(last = true, value_name = "DOCKER_ARGS")]
@@ -330,6 +342,7 @@ fn run(args: Run) -> Result<()> {
         ports: args.ports,
         workdir: args.workdir,
         keep: args.keep,
+        host_paths: args.host_paths || image.host_paths,
         docker_args: args.docker_args,
         proxy: proxy_for(&settings, &image)?,
     };
