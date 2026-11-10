@@ -183,7 +183,7 @@ setfacl -R -m u:1000:rwX,d:u:1000:rwX ~/src/my-project
 
 | Image      | Config in container             | Notes                                   |
 | ---------- | ------------------------------- | --------------------------------------- |
-| `claude`   | `/home/ubuntu/.claude`          |                                         |
+| `claude`   | `/home/ubuntu/.claude`          | can connect to your IDE, see below      |
 | `opencode` | `/home/ubuntu/.config/opencode` | can use Ollama on the host, see below   |
 | `codex`    | `/home/ubuntu/.codex`           | runs without its own sandbox, see below |
 | `cursor`   | `/home/ubuntu/.cursor`          | runs without its own sandbox, see below |
@@ -198,6 +198,30 @@ All are built on `sndbx:base`: Ubuntu with node, pnpm, python, ruby, rust, uv an
 **cursor:** runs with `--sandbox disabled`, like codex. The image links `~/.config/cursor`, where cursor keeps its login, into `~/.cursor`, so one config directory holds both.
 
 **dsh:** published on `127.0.0.1:3080` only. Keep it that way: a plain `-p 3080:3080` lets anyone on your network control the agent.
+
+### Claude in your IDE
+
+The Claude Code plugin in IntelliJ IDEA and other IDEs listens on the host's `127.0.0.1` and writes a lock file to `~/.claude/ide` with its port and the project's path. Claude connects when it finds a lock file for a project it runs in. A second entry for the claude image lets it do that from a sandbox:
+
+```yaml
+  - name: claude-ide
+    tag: sndbx:claude # the claude entry's image
+    config_dir: claude # and its config directory, with the login
+    proxy: false # the proxy's network has no route to the host
+    docker_args:
+      - "--volume=~/.claude/ide:/home/ubuntu/.claude/ide:ro"
+      - "--env=CLAUDE_CODE_IDE_HOST_OVERRIDE=host.docker.internal"
+```
+
+The project must be mounted at its host path, since the lock file and the diffs the IDE opens use it. An alias per project:
+
+```sh
+alias claude-my-project='sndbx run claude-ide -v "$HOME/src/my-project" -v "$HOME/src/my-project:$HOME/src/my-project" -w "$HOME/src/my-project"'
+```
+
+The plain `-v` keeps a volume in `/workspace`, so `run` doesn't also mount the current directory; `-w` starts in the host path. Open the project in the IDE first, build the image with `sndbx build claude`, and run `/ide` in Claude if it doesn't connect on its own.
+
+`host.docker.internal` reaches the host's `127.0.0.1` on macOS with OrbStack or Docker Desktop. On Linux, replace the `--env` line with `--network=host`.
 
 ## Remove
 
