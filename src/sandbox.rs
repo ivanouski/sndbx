@@ -23,6 +23,8 @@ pub struct Options {
     pub ports: Vec<String>,
     pub workdir: Option<String>,
     pub keep: bool,
+    /// Mounts volumes without a destination at their host path rather than in `MOUNT_ROOT`
+    pub host_paths: bool,
     pub docker_args: Vec<String>,
     /// `None` for the open network
     pub proxy: Option<Proxy>,
@@ -32,9 +34,22 @@ struct Volume {
     source: PathBuf,
     target: String,
     options: Option<String>,
+    /// What `-w` takes for a volume in the workspace, at the default target or in `MOUNT_ROOT`; `None` for others
+    name: Option<String>,
 }
 
 impl Volume {
+    /// At the default target or in `MOUNT_ROOT`, which keeps the current directory from being mounted and is
+    /// where the sandbox starts by default
+    fn in_workspace(&self) -> bool {
+        self.name.is_some()
+    }
+
+    /// What the workdir errors list it as
+    fn listed_name(&self) -> &str {
+        self.name.as_deref().unwrap_or(&self.target)
+    }
+
     /// Docker's `SRC:DST[:OPTS]`
     fn spec(&self) -> String {
         match &self.options {
@@ -59,7 +74,7 @@ impl Sandbox {
         let mut docker_args = image.docker_args.clone();
         docker_args.extend(options.docker_args);
 
-        let volumes = volumes(&options.volumes)?;
+        let volumes = volumes(&options.volumes, options.host_paths)?;
         let workdir = workdir(&volumes, options.workdir.as_deref())?;
 
         let ports = ports(&image, &options.ports, options.proxy.is_some())?;
@@ -180,26 +195,52 @@ impl Sandbox {
     }
 }
 
-/// The directory volume the sandbox starts in, `name`'s or the default
+/// The directory volume the sandbox starts in: the one at `name` if it's absolute, else the one in the workspace
+/// it names, or the default
 fn workdir(volumes: &[Volume], name: Option<&str>) -> Result<String> {
-    let targets = directory_targets(volumes);
-    let Some(default) = default_workdir(&targets) else {
+    let directories = directory_volumes(volumes);
+    let Some(default) = default_workdir(&directories) else {
         bail!("no directory volume to start in");
     };
     let Some(name) = name else {
-        return Ok(default.to_string());
+        return Ok(default.target.clone());
     };
-    let workdir = workdir_target(name);
-    if targets.contains(&workdir.as_str()) {
-        return Ok(workdir);
-    }
 
-    let names: Vec<&str> = targets.iter().map(|target| workdir_name(target)).collect();
-    bail!(
-        "workdir '{}' is not a directory volume, expected one of: {}",
-        workdir_name(&workdir),
-        names.join(", ")
-    )
+    let absolute = is_absolute(name).then(|| container_path(name));
+    // An absolute one is shown by its name when it's in the workspace
+    let wanted = absolute.as_deref().map_or(name, workdir_name);
+    // Targets are unique, so only a relative name can match more than one volume
+    let matches: Vec<&Volume> = directories
+        .iter()
+        .copied()
+        .filter(|volume| match &absolute {
+            Some(target) => volume.target == *target,
+            None => volume.name.as_deref() == Some(name),
+        })
+        .collect();
+    match matches.as_slice() {
+        [volume] => Ok(volume.target.clone()),
+        [] => {
+            let names: Vec<&str> = directories
+                .iter()
+                .map(|volume| volume.listed_name())
+                .collect();
+            bail!(
+                "workdir '{wanted}' is not a directory volume, expected one of: {}",
+                names.join(", ")
+            )
+        }
+        several => {
+            let targets: Vec<&str> = several
+                .iter()
+                .map(|volume| volume.target.as_str())
+                .collect();
+            bail!(
+                "workdir '{wanted}' names more than one volume, use its path: {}",
+                targets.join(", ")
+            )
+        }
+    }
 }
 
 /// Normalized and deduplicated; a proxied sandbox can't publish any
@@ -272,31 +313,33 @@ fn home(user: &str) -> Option<String> {
     }
 }
 
-fn directory_targets(volumes: &[Volume]) -> Vec<&str> {
+fn directory_volumes(volumes: &[Volume]) -> Vec<&Volume> {
     volumes
         .iter()
         .filter(|volume| volume.source.is_dir())
-        .map(|volume| volume.target.as_str())
         .collect()
 }
 
-/// The last target in the workspace, or the last one anywhere; `None` when there are none
-fn default_workdir<'a>(targets: &[&'a str]) -> Option<&'a str> {
-    targets
+/// The last volume in the workspace, or the last one anywhere; `None` when there are none
+fn default_workdir<'a>(volumes: &[&'a Volume]) -> Option<&'a Volume> {
+    volumes
         .iter()
         .rev()
-        .find(|target| is_in_workspace(target))
-        .or(targets.last())
+        .find(|volume| volume.in_workspace())
+        .or(volumes.last())
         .copied()
 }
 
-fn volumes(specs: &[String]) -> Result<Vec<Volume>> {
+fn volumes(specs: &[String], host_paths: bool) -> Result<Vec<Volume>> {
     let mut volumes = specs
         .iter()
-        .map(|spec| parse_volume(spec))
+        .map(|spec| parse_volume(spec, host_paths))
         .collect::<Result<Vec<_>>>()?;
-    if !volumes.iter().any(|volume| is_in_workspace(&volume.target)) {
-        volumes.insert(0, parse_volume(&paths::current_dir().to_string_lossy())?);
+    if !volumes.iter().any(Volume::in_workspace) {
+        volumes.insert(
+            0,
+            parse_volume(&paths::current_dir().to_string_lossy(), host_paths)?,
+        );
     }
 
     let mut targets = HashSet::new();
@@ -309,8 +352,9 @@ fn volumes(specs: &[String]) -> Result<Vec<Volume>> {
     Ok(volumes)
 }
 
-/// Like docker's `-v SRC[:DST[:OPTS]]`, but SRC is a host path and DST defaults to `MOUNT_ROOT/<basename>`
-fn parse_volume(spec: &str) -> Result<Volume> {
+/// Like docker's `-v SRC[:DST[:OPTS]]`, but SRC is a host path and DST defaults to `MOUNT_ROOT/<basename>`, or to SRC
+/// with `host_paths`
+fn parse_volume(spec: &str, host_paths: bool) -> Result<Volume> {
     let parts: Vec<&str> = spec.split(':').collect();
     if parts.len() > 3 || parts.iter().any(|part| part.is_empty()) {
         bail!("invalid volume '{spec}', expected SRC[:DST[:OPTS]]");
@@ -327,32 +371,37 @@ fn parse_volume(spec: &str) -> Result<Volume> {
         bail!("refusing to mount {}", source.display());
     }
 
-    let target = if let Some(target) = parts.get(1) {
+    let (target, name) = if let Some(target) = parts.get(1) {
         if !is_absolute(target) {
             bail!("invalid volume '{spec}', DST must be an absolute path");
         }
-        container_path(target)
+        let target = container_path(target);
+        let name = is_in_workspace(&target).then(|| workdir_name(&target).to_string());
+        (target, name)
     } else {
         if !source.is_dir() {
             bail!("{} is not a directory", source.display());
         }
         // The root is refused above
-        mount_target(&source.file_name().unwrap_or_default().to_string_lossy())
+        let name = source
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .into_owned();
+        let target = if host_paths {
+            container_path(&source.to_string_lossy())
+        } else {
+            mount_target(&name)
+        };
+        (target, Some(name))
     };
 
     Ok(Volume {
         source,
         target,
         options: parts.get(2).map(ToString::to_string),
+        name,
     })
-}
-
-fn workdir_target(name: &str) -> String {
-    if is_absolute(name) {
-        container_path(name)
-    } else {
-        mount_target(name)
-    }
 }
 
 fn workdir_name(target: &str) -> &str {

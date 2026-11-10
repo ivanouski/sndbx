@@ -21,7 +21,7 @@ _sndbx_new_images() {
 }
 
 # Adds the workdir names for the volume SRC[:DST[:OPTS]] in $1 to the caller's workdirs,
-# and sets its has_workspace when the volume is in the workspace
+# and sets its has_workspace when the volume is in the workspace, as one without DST is even with --host-paths
 _sndbx_add_workdir() {
   # MOUNT_ROOT in the Rust code
   local -r mount_root=/workspace
@@ -83,10 +83,11 @@ _sndbx_run() {
   fi
 
   _arguments -s \
-    '*'{-v+,--volume=}'[Mount SRC at DST, /workspace/<basename> by default]:volume:{_sndbx_volume}' \
-    '(-w --workdir)'{-w+,--workdir=}"[Start in /workspace/<NAME>, or NAME if it's absolute]:workdir:{_sndbx_workdirs}" \
+    '*'{-v+,--volume=}'[Mount SRC at DST, /workspace/<basename> by default, or SRC with --host-paths]:volume:{_sndbx_volume}' \
+    '(-w --workdir)'{-w+,--workdir=}"[Start in /workspace/<NAME>, the volume of that basename with --host-paths, or NAME if it's absolute]:workdir:{_sndbx_workdirs}" \
     '*'{-p+,--publish=}'[Publish a port as HOST:CONTAINER]:port: ' \
     '(-k --keep)'{-k,--keep}'[Keep the container after it exits]' \
+    '--host-paths[Mount volumes without a DST, and the current directory, at their host path]' \
     '(- *)'{-h,--help}'[Print help]' \
     '1:image:{_sndbx_names images image configured}'
 }

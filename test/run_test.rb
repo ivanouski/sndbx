@@ -136,6 +136,78 @@ class RunTest < SndbxTestCase
     assert_includes docker_calls.last, '--workdir=/workspace/api'
   end
 
+  def test_run_with_host_paths_mounts_the_current_directory_at_its_path
+    write_claude_settings
+
+    sndbx('run', 'claude', '--host-paths')
+
+    assert_equal [*host_path_run_options(@work), *host_path_volume(@work), *config_volume, *TERMINAL_ENV,
+                  'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_run_with_host_paths_in_the_settings
+    write_settings(images: [{ name: 'claude', host_paths: true }])
+    add_docker_image('sndbx:claude')
+    api = mkdir('work/api')
+    web = mkdir('work/web')
+
+    sndbx('run', 'claude', '-v', api, '-v', '../web', '-w', 'api')
+
+    assert_equal [*host_path_run_options(api), *host_path_volume(api), *host_path_volume(web), *config_volume,
+                  *TERMINAL_ENV, 'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_run_with_host_paths_keeps_volume_targets
+    write_claude_settings
+    sdk = mkdir('work/sdk')
+
+    sndbx('run', 'claude', '--host-paths', '-v', '../sdk:/opt/sdk:ro')
+
+    assert_equal [*host_path_run_options(@work), *host_path_volume(@work), '-v', "#{sdk}:/opt/sdk:ro", *config_volume,
+                  *TERMINAL_ENV, 'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_run_with_host_paths_and_absolute_workdir
+    write_claude_settings
+    api = mkdir('work/api')
+    web = mkdir('work/web')
+
+    sndbx('run', 'claude', '--host-paths', '-v', api, '-v', web, '-w', api)
+
+    assert_includes docker_calls.last, "--workdir=#{api}"
+  end
+
+  def test_run_with_host_paths_mounts_directories_of_the_same_name
+    write_claude_settings
+    first = mkdir('a/project')
+    second = mkdir('b/project')
+
+    sndbx('run', 'claude', '--host-paths', '-v', first, '-v', second)
+
+    assert_equal [*host_path_run_options(second), *host_path_volume(first), *host_path_volume(second), *config_volume,
+                  *TERMINAL_ENV, 'sndbx:claude'],
+                 docker_calls.last
+  end
+
+  def test_workdir_with_host_paths_must_name_one_volume
+    write_claude_settings
+    first = mkdir('a/project')
+    second = mkdir('b/project')
+
+    assert_error "workdir 'project' names more than one volume, use its path: #{first}, #{second}",
+                 sndbx('run', 'claude', '--host-paths', '-v', first, '-v', second, '-w', 'project')
+  end
+
+  def test_workdir_with_host_paths_must_be_a_volume
+    write_claude_settings
+
+    assert_error "workdir 'api' is not a directory volume, expected one of: project",
+                 sndbx('run', 'claude', '--host-paths', '-w', 'api')
+  end
+
   def test_workdir_must_be_a_volume
     write_claude_settings
 

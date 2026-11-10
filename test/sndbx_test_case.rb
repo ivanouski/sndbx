@@ -219,6 +219,14 @@ class SndbxTestCase < Minitest::Test
     ['-v', "#{path}:/workspace/#{name}"]
   end
 
+  def host_path_run_options(workdir)
+    ['run', '--rm', '-it', '--label=sndbx.image=claude', "--name=#{File.basename(workdir)}", "--workdir=#{workdir}"]
+  end
+
+  def host_path_volume(path)
+    ['-v', "#{path}:#{path}"]
+  end
+
   def config_volume
     ['-v', "#{default_config_dir}:/home/ubuntu/.claude"]
   end

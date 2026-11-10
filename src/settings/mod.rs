@@ -44,6 +44,8 @@ pub struct Image {
     pub docker_args: Vec<String>,
     /// Whether the image uses the proxy when it's on
     pub proxy: bool,
+    /// Whether volumes without a destination mount at their host path, as with `run --host-paths`
+    pub host_paths: bool,
 }
 
 /// The settings file as written
@@ -103,6 +105,8 @@ struct Entry {
     docker_args: Vec<String>,
     #[serde(default)]
     proxy: Option<bool>,
+    #[serde(default)]
+    host_paths: Option<bool>,
 }
 
 #[derive(Default)]
@@ -173,6 +177,7 @@ impl Settings {
                 &paths::home(),
             ),
             proxy: entry.proxy.unwrap_or(true),
+            host_paths: entry.host_paths.unwrap_or(false),
         })
     }
 

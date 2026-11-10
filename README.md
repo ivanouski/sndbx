@@ -56,6 +56,7 @@ sndbx run claude -v . -v ../notes                     # a plain -v replaces the 
 sndbx run claude -v ./sdk:/opt/sdk:ro                 # mount a read-only SDK, start in the current directory
 sndbx run claude -p 3000 -p 8080:80                   # publish ports, 3000 means 3000:3000
 sndbx run claude -k                                   # keep the container after it exits, for resume
+sndbx run claude --host-paths -v ../api               # mount at the host path, like /Users/me/src/api, not /workspace/api
 sndbx run claude -- --memory=8g -e FOO=bar            # pass extra arguments to docker run
 sndbx exec claude my-project bash                     # run a command in a running sandbox
 sndbx resume claude my-project-1                      # restart a stopped sandbox
@@ -70,7 +71,7 @@ sndbx logs proxy -p                                   # with sandbox names, loca
 `sndbx run` also:
 
 - builds the image if it's missing and `images_dir` has a Dockerfile for it; pull or build other images yourself
-- mounts `-v` paths without a destination, and the current directory, at `/workspace/<basename>`
+- mounts `-v` paths without a destination, and the current directory, at `/workspace/<basename>`, or at their host path with `--host-paths`; `-w` takes the basename either way, or the path when two share it
 - mounts the image's config directory at `<config_target>`, in the container user's home unless it's absolute
 - passes `COLORTERM`, `TERM_PROGRAM` and `TERM_PROGRAM_VERSION` from the host
 - labels the container `sndbx.image=<name>`, which `exec`, `resume` and `list` find it by
@@ -96,6 +97,7 @@ images:
     config_dir: ~/.claude_docker # optional, defaults to ~/.config/sndbx/<name>
     config_target: .claude # optional, relative to the user's home or absolute, defaults to .<name>
     docker_args: ["--memory=8g"] # optional, after the top-level ones
+    host_paths: true # optional, as if run always had --host-paths
   - name: opencode
     config_target: .config/opencode
     docker_args: ["--add-host=host.docker.internal:host-gateway"]
@@ -208,18 +210,13 @@ The Claude Code plugin in IntelliJ IDEA and other IDEs listens on the host's `12
     tag: sndbx:claude # the claude entry's image
     config_dir: claude # and its config directory, with the login
     proxy: false # the proxy's network has no route to the host
+    host_paths: true # the lock file and the diffs the IDE opens use the project's host path
     docker_args:
       - "--volume=~/.claude/ide:/home/ubuntu/.claude/ide:ro"
       - "--env=CLAUDE_CODE_IDE_HOST_OVERRIDE=host.docker.internal"
 ```
 
-The project must be mounted at its host path, since the lock file and the diffs the IDE opens use it. An alias per project:
-
-```sh
-alias claude-my-project='sndbx run claude-ide -v "$HOME/src/my-project" -v "$HOME/src/my-project:$HOME/src/my-project" -w "$HOME/src/my-project"'
-```
-
-The plain `-v` keeps a volume in `/workspace`, so `run` doesn't also mount the current directory; `-w` starts in the host path. Open the project in the IDE first, build the image with `sndbx build claude`, and run `/ide` in Claude if it doesn't connect on its own.
+Open the project in the IDE, build the image with `sndbx build claude`, and run `sndbx run claude-ide` in the project. Run `/ide` in Claude if it doesn't connect on its own.
 
 `host.docker.internal` reaches the host's `127.0.0.1` on macOS with OrbStack or Docker Desktop. On Linux, replace the `--env` line with `--network=host`.
 
