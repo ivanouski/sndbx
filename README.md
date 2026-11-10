@@ -37,14 +37,11 @@ cargo install --path .
 Optionally, install shell completion. Arguments after `--` complete with docker's completion; for zsh, if docker's is installed.
 
 ```sh
-# bash 4.0+, with bash-completion
-cp completions/bash/sndbx ~/.local/share/bash-completion/completions/sndbx
-# or, without it, in ~/.bashrc
-source ~/src/sndbx/completions/bash/sndbx
-
-# zsh, in ~/.zshrc before compinit, or copy completions/zsh/_sndbx to a directory in fpath
-fpath=(~/src/sndbx/completions/zsh $fpath)
+stow -d completions -t ~/.local/share/bash-completion/completions bash   # bash 4.0+, with bash-completion 2.8+
+stow -d completions -t ~/.zsh/completions zsh                            # zsh
 ```
+
+stow needs the target directories to exist, and links into the clone, so pulling updates the completion. For zsh, add `fpath=(~/.zsh/completions $fpath)` before `compinit`. For bash without bash-completion, `source ~/src/sndbx/completions/bash/_sndbx` in `~/.bashrc`.
 
 ## Use
 
