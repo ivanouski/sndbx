@@ -173,7 +173,10 @@ _sndbx_logs() {
     args)
       curcontext=${curcontext%:*}-$words[1]:
       case $words[1] in
-        commands) _arguments $common && ret=0 ;;
+        commands)
+          _arguments $common \
+            '(-p --pretty)'{-p,--pretty}'[Local times and a row for each option, in color on a terminal]' && ret=0
+          ;;
         proxy)
           _arguments $common \
             '(-d --denied)'{-d,--denied}'[Only the requests the proxy denied]' \

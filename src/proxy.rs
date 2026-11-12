@@ -185,8 +185,8 @@ fn replace(exists: bool, image: &str) -> Result<ContainerState> {
         "-k",
         "parse",
     ])?;
-    // -v removes the log and cache volumes, which would pile up
-    if exists && !docker::run_muted(&["rm", "-f", "-v", CONTAINER]) {
+    // --volumes removes the log and cache volumes, which would pile up
+    if exists && !docker::run_muted(&["rm", "-f", "--volumes", CONTAINER]) {
         bail!("can't remove the proxy {CONTAINER} to replace it");
     }
     let restart = "--restart=unless-stopped";

@@ -10,11 +10,40 @@ use anyhow::{Context, bail};
 use crate::paths::shell_join;
 use crate::{Result, paths};
 
+mod pretty;
+
 const DOCKER: &str = "docker";
+const TAIL: &str = "tail";
 pub const IMAGE_LABEL: &str = "sndbx.image";
+// The command log's time, which `logs commands --pretty` parses back
+const LOG_TIME_FORMAT: &str = "%FT%T%:z";
 
 pub fn log_path() -> PathBuf {
     paths::state_dir().join("sndbx.log")
+}
+
+/// Follows the command log like `tail -f`, starting with the last `lines`, formatted if `pretty`
+pub fn follow_log(lines: u64, pretty: bool) -> Result<()> {
+    let path = log_path();
+    if !path.exists() {
+        bail!("no log yet at {}", path.display());
+    }
+
+    let mut tail = Command::new(TAIL);
+    tail.args(["-n", &lines.to_string(), "-f"]).arg(&path);
+    if !pretty {
+        return Err(tail_error(tail.exec()));
+    }
+    let child = tail.stdout(Stdio::piped()).spawn().map_err(tail_error)?;
+    pretty::follow(child)
+}
+
+fn tail_error(e: std::io::Error) -> anyhow::Error {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        anyhow::anyhow!("{TAIL} is not installed")
+    } else {
+        anyhow::Error::new(e).context(format!("can't run {TAIL}"))
+    }
 }
 
 pub fn check_docker() -> Result<()> {
@@ -305,7 +334,7 @@ fn log_command<S: AsRef<str>>(args: &[S]) {
         .collect();
     let line = format!(
         "{} {}\n",
-        jiff::Zoned::now().strftime("%FT%T%:z"),
+        jiff::Zoned::now().strftime(LOG_TIME_FORMAT),
         shell_join(&command)
     );
 

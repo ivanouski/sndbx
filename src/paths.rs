@@ -117,6 +117,36 @@ pub fn shell_join(words: &[&str]) -> String {
         .join(" ")
 }
 
+/// The words `shell_join` joined: backslashes and single quotes; `None` for an unclosed quote or a trailing
+/// backslash
+pub fn shell_split(line: &str) -> Option<Vec<String>> {
+    const QUOTE: char = '\'';
+    const ESCAPE: char = '\\';
+
+    let mut words = Vec::new();
+    // A quote starts a word even if it's empty
+    let mut word: Option<String> = None;
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            ESCAPE => word.get_or_insert_default().push(chars.next()?),
+            QUOTE => {
+                let word = word.get_or_insert_default();
+                loop {
+                    match chars.next()? {
+                        QUOTE => break,
+                        c => word.push(c),
+                    }
+                }
+            }
+            c if c.is_whitespace() => words.extend(word.take()),
+            c => word.get_or_insert_default().push(c),
+        }
+    }
+    words.extend(word);
+    Some(words)
+}
+
 /// Backslashes special characters; `''` for an empty word, newlines in single quotes
 fn shell_escape(word: &str) -> String {
     if word.is_empty() {

@@ -29,3 +29,22 @@ fn shell_join_escapes() {
         "docker my\\ dir '' a'\n'b x\\=\\$y /a:b@c,d+e"
     );
 }
+
+#[test]
+fn shell_split_reverses_shell_join() {
+    let words = ["docker", "my dir", "", "a\nb", "x=$y", "it's", "\\"];
+    assert_eq!(shell_split(&shell_join(&words)).unwrap(), words);
+}
+
+#[test]
+fn shell_split_splits_at_whitespace() {
+    assert_eq!(shell_split("  a\tb  c ").unwrap(), ["a", "b", "c"]);
+    assert_eq!(shell_split("").unwrap(), Vec::<String>::new());
+    assert_eq!(shell_split("a''b 'c d'e").unwrap(), ["ab", "c de"]);
+}
+
+#[test]
+fn shell_split_rejects_unfinished_words() {
+    assert_eq!(shell_split("a 'b"), None);
+    assert_eq!(shell_split("a\\"), None);
+}

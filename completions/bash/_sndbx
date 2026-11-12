@@ -260,7 +260,7 @@ _sndbx_logs() {
     return 0
   elif [[ "${cur}" == -* ]]; then
     case "${positionals[0]}" in
-      commands) _sndbx_reply '-n --lines -h --help' ;;
+      commands) _sndbx_reply '-n --lines -p --pretty -h --help' ;;
       proxy) _sndbx_reply '-n --lines -d --denied -p --pretty -h --help' ;;
       *) _sndbx_reply '-h --help' ;;
     esac
