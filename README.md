@@ -61,6 +61,7 @@ sndbx list configured                                 # image names in the setti
 sndbx list buildable                                  # image names build accepts
 sndbx list running claude                             # claude's sandboxes; stopped for the stopped ones
 sndbx logs commands                                   # follow the docker commands sndbx ran
+sndbx logs commands -p                                # with local times and the options in rows
 sndbx logs proxy                                      # follow the proxy's requests
 sndbx logs proxy -p                                   # with sandbox names, local times and readable sizes
 ```
@@ -74,7 +75,7 @@ sndbx logs proxy -p                                   # with sandbox names, loca
 - labels the container `sndbx.image=<name>`, which `exec`, `resume` and `list` find it by
 - names the container after the starting directory, `my-project`, then `my-project-1`, … Other characters than letters, digits, `_` and `-` become `-`. Override with `-- --name=<name>`.
 
-Docker commands are logged to `~/.local/state/sndbx/sndbx.log` (`$XDG_STATE_HOME/sndbx/` if set).
+Docker commands are logged to `~/.local/state/sndbx/sndbx.log` (`$XDG_STATE_HOME/sndbx/` if set). `sndbx logs commands --pretty` shows local times, the options without values next to the image, and a row for each other option, its values grouped in their order. A word after an option is taken as its value, except after the flags sndbx writes, so a flag of yours right before the image, like `-- --init`, shows the image as its value; colors are on a terminal unless `NO_COLOR` is set. Copy commands from the plain log, which keeps their quoting.
 
 ## Configure
 

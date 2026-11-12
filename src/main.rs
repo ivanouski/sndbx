@@ -3,6 +3,7 @@ mod builder;
 mod commands;
 mod docker;
 mod paths;
+mod pretty;
 mod proxy;
 mod sandbox;
 mod settings;

@@ -78,6 +78,37 @@ class LogsTest < SndbxTestCase
     assert_equal ['-n', '50', '-f', log_path], JSON.parse(sndbx('logs', 'commands', '-n', '50').out)
   end
 
+  def test_logs_formats_the_docker_commands
+    write_printing_tail
+    FileUtils.mkdir_p(File.dirname(log_path))
+    File.write(log_path, <<~LOG)
+      2026-11-12T12:47:09+01:00 docker run --rm -it --name\\=my\\ project -v /home/me/src/a:/workspace/a --env\\=COLORTERM -v /home/me/.claude:/home/ubuntu/.claude --env\\=NO_PROXY\\=localhost sndbx:claude
+      2026-11-12T12:50:00+01:00 docker exec -it sndbx-proxy tail -n 10 -F /var/log/squid/access.log
+      tail: sndbx.log: file truncated
+    LOG
+
+    result = sndbx('logs', 'commands', '--pretty', env: { 'TZ' => 'JST-9' })
+
+    assert_predicate result, :success?
+    assert_equal ['2026-11-12 20:47:09 docker run --rm -it sndbx:claude',
+                  '                           --name  my project',
+                  '                           -v      /home/me/src/a:/workspace/a',
+                  '                                   /home/me/.claude:/home/ubuntu/.claude',
+                  '                           --env   COLORTERM',
+                  '                                   NO_PROXY=localhost',
+                  '2026-11-12 20:50:00 docker exec -it sndbx-proxy tail -n 10 -F /var/log/squid/access.log',
+                  'tail: sndbx.log: file truncated'],
+                 result.out.lines(chomp: true)
+  end
+
+  def test_logs_fails_when_the_formatted_log_cannot_be_followed
+    write_printing_tail(status: 1)
+    FileUtils.mkdir_p(File.dirname(log_path))
+    File.write(log_path, '')
+
+    assert_error "can't follow the command log", sndbx('logs', 'commands', '-p')
+  end
+
   def test_logs_without_a_log
     write_fake_tail
 
@@ -151,6 +182,12 @@ class LogsTest < SndbxTestCase
 
   def write_fake_tail
     write_executable(File.join(@bin, 'tail'), "#!#{RbConfig.ruby} --disable-gems\nrequire 'json'\nputs ARGV.to_json\n")
+  end
+
+  # Prints the log and exits
+  def write_printing_tail(status: 0)
+    write_executable(File.join(@bin, 'tail'),
+                     "#!#{RbConfig.ruby} --disable-gems\nprint File.read(ARGV.last)\nexit #{status}\n")
   end
 
   def log_path

@@ -1,9 +1,7 @@
 use std::collections::HashSet;
 use std::io::IsTerminal;
-use std::os::unix::process::CommandExt;
-use std::process::Command;
 
-use anyhow::{Context, bail};
+use anyhow::bail;
 use clap::builder::NonEmptyStringValueParser;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 
@@ -263,7 +261,7 @@ enum LogsWhat {
         override_usage = "sndbx logs commands [options]",
         before_help = format!("Follows {}, the docker commands sndbx ran.", docker::log_path().display())
     )]
-    Commands(Lines),
+    Commands(CommandLogs),
 
     /// The requests the proxy let through or denied
     #[command(
@@ -271,6 +269,16 @@ enum LogsWhat {
         before_help = "Follows the access log of the running proxy, which goes when the proxy is replaced."
     )]
     Proxy(ProxyLogs),
+}
+
+#[derive(Args)]
+struct CommandLogs {
+    #[command(flatten)]
+    lines: Lines,
+
+    /// Local times and a row for each option, in color on a terminal
+    #[arg(short, long)]
+    pretty: bool,
 }
 
 #[derive(Args)]
@@ -532,7 +540,7 @@ fn logs(args: Logs) -> Result<()> {
             print_help(Some("logs"));
             Ok(())
         }
-        Some(LogsWhat::Commands(args)) => command_log(args.lines),
+        Some(LogsWhat::Commands(args)) => docker::follow_log(args.lines.lines, args.pretty),
         Some(LogsWhat::Proxy(args)) => {
             check_docker()?;
             proxy::follow_log(&LogOptions {
@@ -542,24 +550,6 @@ fn logs(args: Logs) -> Result<()> {
             })
         }
     }
-}
-
-fn command_log(lines: u64) -> Result<()> {
-    const TAIL: &str = "tail";
-
-    let log_path = docker::log_path();
-    if !log_path.exists() {
-        bail!("no log yet at {}", log_path.display());
-    }
-
-    let e = Command::new(TAIL)
-        .args(["-n", &lines.to_string(), "-f"])
-        .arg(&log_path)
-        .exec();
-    if e.kind() == std::io::ErrorKind::NotFound {
-        bail!("{TAIL} is not installed");
-    }
-    Err(e).context(format!("can't run {TAIL}"))
 }
 
 /// sndbx's help, or the subcommand's

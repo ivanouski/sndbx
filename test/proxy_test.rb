@@ -93,7 +93,7 @@ class ProxyTest < SndbxTestCase
 
     sndbx('run', 'claude')
 
-    assert_equal [network_inspect, proxy_inspect, proxy_parse, %w[rm -f -v sndbx-proxy], proxy_run,
+    assert_equal [network_inspect, proxy_inspect, proxy_parse, %w[rm -f --volumes sndbx-proxy], proxy_run,
                   %w[network connect sndbx-internal sndbx-proxy]],
                  proxy_calls
   end
@@ -107,7 +107,7 @@ class ProxyTest < SndbxTestCase
 
     sndbx('run', 'claude')
 
-    assert_equal [network_inspect, proxy_inspect, proxy_parse, %w[rm -f -v sndbx-proxy], proxy_run,
+    assert_equal [network_inspect, proxy_inspect, proxy_parse, %w[rm -f --volumes sndbx-proxy], proxy_run,
                   %w[network connect sndbx-internal sndbx-proxy]],
                  proxy_calls
   end
@@ -121,7 +121,7 @@ class ProxyTest < SndbxTestCase
 
     sndbx('run', 'claude')
 
-    assert_equal [network_inspect, proxy_inspect, proxy_parse('ubuntu/squid:6.13'), %w[rm -f -v sndbx-proxy],
+    assert_equal [network_inspect, proxy_inspect, proxy_parse('ubuntu/squid:6.13'), %w[rm -f --volumes sndbx-proxy],
                   proxy_run('ubuntu/squid:6.13'), %w[network connect sndbx-internal sndbx-proxy]],
                  proxy_calls
   end
@@ -177,7 +177,7 @@ class ProxyTest < SndbxTestCase
 
     sndbx('run', 'claude')
 
-    assert_equal [network_inspect, proxy_inspect, proxy_parse, %w[rm -f -v sndbx-proxy], proxy_run,
+    assert_equal [network_inspect, proxy_inspect, proxy_parse, %w[rm -f --volumes sndbx-proxy], proxy_run,
                   %w[network connect sndbx-internal sndbx-proxy]],
                  proxy_calls
   end
@@ -209,7 +209,7 @@ class ProxyTest < SndbxTestCase
 
     assert_predicate sndbx('run', 'claude'), :success?
     assert_equal [network_inspect, %w[network create --internal sndbx-internal], proxy_inspect, proxy_parse,
-                  %w[rm -f -v sndbx-proxy], proxy_run, %w[network connect sndbx-internal sndbx-proxy]],
+                  %w[rm -f --volumes sndbx-proxy], proxy_run, %w[network connect sndbx-internal sndbx-proxy]],
                  proxy_calls
   end
 

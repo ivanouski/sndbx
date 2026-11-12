@@ -1,9 +1,8 @@
 //! `logs proxy --pretty`: the access log with sandbox names for addresses, local times, and readable durations and
 //! sizes, in color on a terminal
 
-use std::io::{self, BufRead, BufReader, IsTerminal, Read, Write};
 use std::ops::RangeInclusive;
-use std::process::{Child, ExitStatus};
+use std::process::ExitStatus;
 
 use anyhow::{Context, bail};
 use jiff::Timestamp;
@@ -15,9 +14,8 @@ use super::{
 };
 use crate::Result;
 use crate::docker::{self, NetworkContainer};
+use crate::pretty::{self, COLUMN_GAP, Color, LINE_END, Painter, TIME_FORMAT};
 
-const TIME_FORMAT: &str = "%F %T";
-const COLUMN_GAP: &str = "  ";
 // The widest values the columns fit, wider ones push the rest along
 const STATUS_WIDTH: usize = "error 503".len();
 const DURATION_WIDTH: usize = "999999s".len();
@@ -46,73 +44,32 @@ const RECEIVED_ARROW: char = '↓';
 const DECIMALS_BELOW: f64 = 10.0;
 const DECIMAL_PLACES: usize = 1;
 
-const NEWLINE: u8 = b'\n';
-const LINE_END: &str = "\n";
 // Docker's -t ends lines with \r\n, and keeps the terminal from returning the cursor at a \n while it runs
 const CARRIAGE_RETURN: char = '\r';
 const TERMINAL_LINE_END: &str = "\r\n";
 // docker exec's status when Ctrl-C stopped the command, 128 + SIGINT
 const INTERRUPTED_STATUS: i32 = 130;
 
-const NO_COLOR_ENV: &str = "NO_COLOR";
-// Starts a color, then a reset, ANSI's Select Graphic Rendition
-const SGR_START: &str = "\x1b[";
-const SGR_END: char = 'm';
-const SGR_RESET: &str = "\x1b[0m";
-
 /// Follows the log `command` prints in the proxy `container`, naming the sandboxes on `network`
 pub fn follow(container: &str, command: &[&str], network: &str) -> Result<()> {
-    let mut child = docker::spawn_until_interrupted(container, command)?;
-    let output = child.stdout.take().expect("piped stdout");
+    let child = docker::spawn_until_interrupted(container, command)?;
     let mut formatter = Formatter::new(
         || docker::network_containers(network),
         TimeZone::system(),
         Painter::for_stdout(),
     );
-    match print_lines(output, &mut formatter) {
-        Ok(End::LogEnded) => check_exit(child.wait().context("can't wait for docker")?),
-        Ok(End::StdoutClosed) => {
-            stop(&mut child);
-            Ok(())
-        }
-        Err(e) => {
-            stop(&mut child);
-            Err(e)
-        }
-    }
-}
-
-fn stop(child: &mut Child) {
-    let _ = child.kill();
-    let _ = child.wait();
-}
-
-/// Why printing stopped
-enum End {
-    LogEnded,
-    /// Like `head` leaves it
-    StdoutClosed,
-}
-
-fn print_lines<F>(output: impl Read, formatter: &mut Formatter<F>) -> Result<End>
-where
-    F: FnMut() -> Vec<NetworkContainer>,
-{
     let line_end = if docker::exec_uses_terminal() {
         TERMINAL_LINE_END
     } else {
         LINE_END
     };
-    let mut stdout = io::stdout().lock();
-    for line in BufReader::new(output).split(NEWLINE) {
-        let line = line.context("can't read the proxy's log from docker")?;
-        let line = String::from_utf8_lossy(&line);
-        let line = formatter.format(line.trim_end_matches(CARRIAGE_RETURN));
-        if write!(stdout, "{line}{line_end}").is_err() {
-            return Ok(End::StdoutClosed);
-        }
-    }
-    Ok(End::LogEnded)
+    pretty::follow(
+        child,
+        line_end,
+        |line| formatter.format(line.trim_end_matches(CARRIAGE_RETURN)),
+        "can't read the proxy's log from docker",
+        |status| check_exit(status.context("can't wait for docker")?),
+    )
 }
 
 /// Docker printed its own error
@@ -366,56 +323,6 @@ impl<F: FnMut() -> Vec<NetworkContainer>> Sandboxes<F> {
             .filter(|container| container.ip == ip && container.started.as_second() <= second)
             .max_by_key(|container| container.started)
             .map(|container| container.name.clone())
-    }
-}
-
-#[derive(Clone, Copy)]
-enum Color {
-    Dim,
-    Cyan,
-    BrightCyan,
-    Magenta,
-    Green,
-    BrightRed,
-    Yellow,
-}
-
-impl Color {
-    /// Its Select Graphic Rendition parameter
-    fn parameter(self) -> &'static str {
-        match self {
-            Self::Dim => "2",
-            Self::Cyan => "36",
-            Self::BrightCyan => "96",
-            Self::Magenta => "35",
-            Self::Green => "32",
-            Self::BrightRed => "91",
-            Self::Yellow => "33",
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct Painter {
-    enabled: bool,
-}
-
-impl Painter {
-    /// On a terminal, unless `NO_COLOR` is set and not empty
-    fn for_stdout() -> Self {
-        let no_color = std::env::var_os(NO_COLOR_ENV).is_some_and(|value| !value.is_empty());
-        Self {
-            enabled: io::stdout().is_terminal() && !no_color,
-        }
-    }
-
-    fn paint(self, text: &str, color: Option<Color>) -> String {
-        match color {
-            Some(color) if self.enabled => {
-                format!("{SGR_START}{}{SGR_END}{text}{SGR_RESET}", color.parameter())
-            }
-            _ => text.to_string(),
-        }
     }
 }
 
