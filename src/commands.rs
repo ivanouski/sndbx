@@ -76,8 +76,8 @@ enum Commands {
 
     /// Run a command in a running sandbox
     #[command(
-        override_usage = "sndbx exec IMAGE CONTAINER [options] COMMAND [ARGS]",
-        before_help = "Runs COMMAND in a running sandbox of IMAGE, like docker exec -i,\n\
+        override_usage = "sndbx exec CONTAINER [options] COMMAND [ARGS]",
+        before_help = "Runs COMMAND in a running sandbox, like docker exec -i,\n\
                        with -t when stdin is a terminal.\n\
                        Options go before COMMAND, everything from COMMAND on goes to it."
     )]
@@ -85,8 +85,8 @@ enum Commands {
 
     /// Restart a stopped sandbox
     #[command(
-        override_usage = "sndbx resume IMAGE CONTAINER",
-        before_help = "Restarts a stopped sandbox of IMAGE, kept by run --keep, and attaches to it,\n\
+        override_usage = "sndbx resume CONTAINER",
+        before_help = "Restarts a stopped sandbox, kept by run --keep, and attaches to it,\n\
                        like docker start -ai."
     )]
     Resume(Resume),
@@ -182,10 +182,7 @@ struct Rm {
 
 #[derive(Args)]
 struct Exec {
-    /// The image's name in the settings
-    image: String,
-
-    /// A running container's name
+    /// A running sandbox's name
     container: String,
 
     /// The command and its arguments
@@ -210,10 +207,7 @@ struct Exec {
 
 #[derive(Args)]
 struct Resume {
-    /// The image's name in the settings
-    image: String,
-
-    /// A stopped container's name
+    /// A stopped sandbox's name
     container: String,
 }
 
@@ -225,7 +219,7 @@ struct List {
 
 #[derive(Subcommand)]
 enum ListWhat {
-    /// Images in the settings, which run, exec and resume take
+    /// Images in the settings, which run takes
     #[command(override_usage = "sndbx list configured")]
     Configured,
 
@@ -233,19 +227,19 @@ enum ListWhat {
     #[command(override_usage = "sndbx list buildable")]
     Buildable,
 
-    /// IMAGE's running sandboxes, which exec takes
-    #[command(override_usage = "sndbx list running IMAGE")]
+    /// Running sandboxes, of IMAGE if given, which exec takes
+    #[command(override_usage = "sndbx list running [IMAGE]")]
     Running(ListImage),
 
-    /// IMAGE's stopped sandboxes, which resume takes
-    #[command(override_usage = "sndbx list stopped IMAGE")]
+    /// Stopped sandboxes, of IMAGE if given, which resume takes
+    #[command(override_usage = "sndbx list stopped [IMAGE]")]
     Stopped(ListImage),
 }
 
 #[derive(Args)]
 struct ListImage {
-    /// The image's name in the settings
-    image: String,
+    /// The image's name in the settings, every image's sandboxes without it
+    image: Option<String>,
 }
 
 #[derive(Args)]
@@ -473,7 +467,9 @@ fn comment_out(name: &str) {
 
 fn exec(args: &Exec) -> Result<()> {
     let container = &args.container;
-    check_sandbox(&args.image, container, "running", running_containers)?;
+    check_docker()?;
+    // Container names are unique across images, so any image's sandboxes will do
+    check_container(container, &running_containers(None)?, "running sandbox")?;
 
     // Docker refuses -t without a terminal on stdin
     let tty = if std::io::stdin().is_terminal() {
@@ -492,23 +488,9 @@ fn exec(args: &Exec) -> Result<()> {
 
 fn resume(args: &Resume) -> Result<()> {
     let container = &args.container;
-    check_sandbox(&args.image, container, "stopped", stopped_containers)?;
-    docker::exec(&["start", "-ai", container])
-}
-
-fn check_sandbox(
-    image: &str,
-    container: &str,
-    state: &str,
-    containers: fn(&str) -> Result<Vec<String>>,
-) -> Result<()> {
-    Settings::load()?.image(image)?;
     check_docker()?;
-    check_container(
-        container,
-        &containers(image)?,
-        &format!("{state} {image} sandbox"),
-    )
+    check_container(container, &stopped_containers(None)?, "stopped sandbox")?;
+    docker::exec(&["start", "-ai", container])
 }
 
 fn list(args: List) -> Result<()> {
@@ -521,11 +503,11 @@ fn list(args: List) -> Result<()> {
         Some(ListWhat::Buildable) => Builder::new(&Settings::load_or_default()?).image_names()?,
         Some(ListWhat::Running(args)) => {
             check_docker()?;
-            running_containers(&args.image)?
+            running_containers(args.image.as_deref())?
         }
         Some(ListWhat::Stopped(args)) => {
             check_docker()?;
-            stopped_containers(&args.image)?
+            stopped_containers(args.image.as_deref())?
         }
     };
     for name in &names {

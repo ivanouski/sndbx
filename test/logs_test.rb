@@ -10,8 +10,8 @@ class LogsTest < SndbxTestCase
     dir = mkdir('work/project/my dir')
 
     sndbx('run', 'claude', '-v', dir)
-    sndbx('exec', 'claude', 'gifted_mcnulty', 'bash')
-    sndbx('resume', 'claude', 'sleepy_babbage')
+    sndbx('exec', 'gifted_mcnulty', 'bash')
+    sndbx('resume', 'sleepy_babbage')
 
     assert_equal [['docker', *run_options('my dir', name: 'my-dir'), '-v', "#{dir}:/workspace/my dir", *config_volume,
                    *TERMINAL_ENV, 'sndbx:claude'],

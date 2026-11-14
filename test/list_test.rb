@@ -42,6 +42,13 @@ class ListTest < SndbxTestCase
     assert_empty sndbx('list', 'running', 'opencode').out
   end
 
+  def test_list_running_of_every_image
+    write_resume_settings
+    add_docker_container('-', 'by_hand')
+
+    assert_equal "gifted_mcnulty\neager_turing\nquirky_hopper\n", sndbx('list', 'running').out
+  end
+
   def test_list_running_without_settings_does_not_create_them
     add_docker_container('claude', 'gifted_mcnulty')
 
@@ -54,5 +61,12 @@ class ListTest < SndbxTestCase
 
     assert_equal "sleepy_babbage\n", sndbx('list', 'stopped', 'claude').out
     assert_empty sndbx('list', 'stopped', 'codex').out
+  end
+
+  def test_list_stopped_of_every_image
+    write_resume_settings
+    add_docker_container('codex', 'zen_lovelace', 'exited')
+
+    assert_equal "sleepy_babbage\nzen_lovelace\n", sndbx('list', 'stopped').out
   end
 end

@@ -47,8 +47,10 @@ class SndbxTestCase < Minitest::Test
       ancestor = filters.find { |arg| arg.start_with?('ancestor=') }&.delete_prefix('ancestor=')
       label = filters.find { |arg| arg.start_with?('label=') }
       containers.each do |image, name, state = 'running', tag = "sndbx:\#{image}"|
+        # The filters matching the label, by key or by key and value
+        labels = image == '-' ? [] : ['label=sndbx.image', "label=sndbx.image=\#{image}"]
         next if status && state != status
-        next if ancestor ? tag != ancestor : label && label != "label=sndbx.image=\#{image}"
+        next if ancestor ? tag != ancestor : label && !labels.include?(label)
 
         puts name
       end
