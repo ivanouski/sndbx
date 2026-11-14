@@ -102,7 +102,7 @@ _sndbx_exec() {
   local i count=0 options_done=0
 
   # Count the arguments before the current word, skipping option values; nothing completes from COMMAND on
-  for (( i = 2; i < CURRENT && count < 3; i++ )); do
+  for (( i = 2; i < CURRENT && count < 2; i++ )); do
     case $options_done:$words[i] in
       0:(-u|--user)) (( i++ )) ;;
       0:--) options_done=1 ;;
@@ -110,25 +110,24 @@ _sndbx_exec() {
       *) (( count++ )) ;;
     esac
   done
-  # After --, the third argument comes next
-  (( count >= 3 || options_done && count >= 2 )) && return 1
+  # After --, the second argument comes next
+  (( count >= 2 || options_done && count >= 1 )) && return 1
 
   _arguments -s -S \
     '(-u --user)'{-u+,--user=}'[Run COMMAND as USER]:user: ' \
     '(- *)'{-h,--help}'[Print help]' \
-    '1:image:{_sndbx_names images image configured}' \
-    '2:container:{_sndbx_names containers container running $line[1]}' \
-    '3:command: '
+    '1:container:{_sndbx_names containers container running}' \
+    '2:command: '
 }
 
 _sndbx_list() {
   local curcontext=$curcontext context state state_descr line ret=1
   local -A opt_args
   local -a what=(
-    'configured:Images in the settings, which run, exec and resume take'
+    'configured:Images in the settings, which run takes'
     'buildable:Images in `images_dir`, which build takes'
-    "running:IMAGE's running sandboxes, which exec takes"
-    "stopped:IMAGE's stopped sandboxes, which resume takes"
+    'running:Running sandboxes, of IMAGE if given, which exec takes'
+    'stopped:Stopped sandboxes, of IMAGE if given, which resume takes'
   )
 
   _arguments -C \
@@ -226,8 +225,7 @@ _sndbx() {
         resume)
           _arguments \
             '(- *)'{-h,--help}'[Print help]' \
-            '1:image:{_sndbx_names images image configured}' \
-            '2:container:{_sndbx_names containers container stopped $line[1]}' && ret=0
+            '1:container:{_sndbx_names containers container stopped}' && ret=0
           ;;
         list) _sndbx_list && ret=0 ;;
         logs) _sndbx_logs && ret=0 ;;

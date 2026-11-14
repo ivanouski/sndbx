@@ -55,11 +55,12 @@ sndbx run claude -p 3000 -p 8080:80                   # publish ports, 3000 mean
 sndbx run claude -k                                   # keep the container after it exits, for resume
 sndbx run claude --host-paths -v ../api               # mount at the host path, like /Users/me/src/api, not /workspace/api
 sndbx run claude -- --memory=8g -e FOO=bar            # pass extra arguments to docker run
-sndbx exec claude my-project bash                     # run a command in a running sandbox
-sndbx resume claude my-project-1                      # restart a stopped sandbox
+sndbx exec my-project bash                            # run a command in a running sandbox
+sndbx resume my-project-1                             # restart a stopped sandbox
 sndbx list configured                                 # image names in the settings
 sndbx list buildable                                  # image names build accepts
-sndbx list running claude                             # claude's sandboxes; stopped for the stopped ones
+sndbx list running                                    # running sandboxes; stopped for the stopped ones
+sndbx list running claude                             # only claude's
 sndbx logs commands                                   # follow the docker commands sndbx ran
 sndbx logs commands -p                                # with local times and the options in rows
 sndbx logs proxy                                      # follow the proxy's requests
@@ -72,7 +73,7 @@ sndbx logs proxy -p                                   # with sandbox names, loca
 - mounts `-v` paths without a destination, and the current directory, at `/workspace/<basename>`, or at their host path with `--host-paths`; `-w` takes the basename either way, or the path when two share it
 - mounts the image's config directory at `<config_target>`, in the container user's home unless it's absolute
 - passes `COLORTERM`, `TERM_PROGRAM` and `TERM_PROGRAM_VERSION` from the host
-- labels the container `sndbx.image=<name>`, which `exec`, `resume` and `list` find it by
+- labels the container `sndbx.image=<name>`, which `exec`, `resume` and `list` find sandboxes by
 - names the container after the starting directory, `my-project`, then `my-project-1`, … Other characters than letters, digits, `_` and `-` become `-`. Override with `-- --name=<name>`.
 
 Docker commands are logged to `~/.local/state/sndbx/sndbx.log` (`$XDG_STATE_HOME/sndbx/` if set). `sndbx logs commands --pretty` shows local times, the options without values next to the image, and a row for each other option, its values grouped in their order. A word after an option is taken as its value, except after the flags sndbx writes, so a flag of yours right before the image, like `-- --init`, shows the image as its value; colors are on a terminal unless `NO_COLOR` is set. Copy commands from the plain log, which keeps their quoting.

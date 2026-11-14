@@ -197,11 +197,13 @@ fn parse_network_container(line: &str, network: &str) -> Option<NetworkContainer
     })
 }
 
-pub fn running_containers(image: &str) -> Result<Vec<String>> {
+/// The image's running sandboxes, or every image's with `None`
+pub fn running_containers(image: Option<&str>) -> Result<Vec<String>> {
     containers(&["--filter", &label_filter(image)])
 }
 
-pub fn stopped_containers(image: &str) -> Result<Vec<String>> {
+/// The image's stopped sandboxes, or every image's with `None`
+pub fn stopped_containers(image: Option<&str>) -> Result<Vec<String>> {
     containers(&[
         "--all",
         "--filter",
@@ -221,8 +223,11 @@ pub fn image_containers(tag: &str) -> Result<Vec<String>> {
     containers(&["--all", "--filter", &format!("ancestor={tag}")])
 }
 
-fn label_filter(image: &str) -> String {
-    format!("label={IMAGE_LABEL}={image}")
+fn label_filter(image: Option<&str>) -> String {
+    match image {
+        Some(image) => format!("label={IMAGE_LABEL}={image}"),
+        None => format!("label={IMAGE_LABEL}"),
+    }
 }
 
 fn containers(ps_args: &[&str]) -> Result<Vec<String>> {

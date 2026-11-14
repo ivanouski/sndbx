@@ -196,60 +196,44 @@ class ZshCompletionTest < Minitest::Test
     assert_empty complete('rm claude codex ')
   end
 
-  def test_exec_images
-    write_images_settings
-
-    assert_equal %w[claude codex], complete('exec ')
-    assert_equal %w[claude codex], complete('exec -u root ')
-    assert_equal %w[claude codex], complete('exec --user=root ')
-  end
-
   def test_exec_containers
-    write_images_settings
     File.write(@docker_containers, "gifted_mcnulty\nquirky_hopper\n")
 
-    assert_equal %w[gifted_mcnulty quirky_hopper], complete('exec claude ')
-    assert_equal %w[quirky_hopper], complete('exec -u root claude q')
-    assert_equal [['info'], ['ps', '--filter', 'label=sndbx.image=claude', '--format', '{{.Names}}']],
+    assert_equal %w[gifted_mcnulty quirky_hopper], complete('exec ')
+    assert_equal %w[gifted_mcnulty quirky_hopper], complete('exec -u root ')
+    assert_equal %w[gifted_mcnulty quirky_hopper], complete('exec --user=root ')
+    assert_equal %w[quirky_hopper], complete('exec -u root q')
+    assert_equal [['info'], ['ps', '--filter', 'label=sndbx.image', '--format', '{{.Names}}']],
                  docker_calls.last(2)
   end
 
   def test_exec_options_before_the_command
-    assert_equal %w[--user], complete('exec claude gifted_mcnulty --u')
+    assert_equal %w[--user], complete('exec gifted_mcnulty --u')
   end
 
   def test_exec_completes_nothing_from_the_command_on
     File.write(File.join(@work, 'README.md'), '')
 
-    assert_empty complete('exec claude gifted_mcnulty ')
-    assert_empty complete('exec claude gifted_mcnulty ls ')
-    assert_empty complete('exec claude gifted_mcnulty ls -')
-    assert_empty complete('exec claude gifted_mcnulty -- -')
+    assert_empty complete('exec gifted_mcnulty ')
+    assert_empty complete('exec gifted_mcnulty ls ')
+    assert_empty complete('exec gifted_mcnulty ls -')
+    assert_empty complete('exec gifted_mcnulty -- -')
     assert_empty complete('exec -u ')
   end
 
-  def test_resume_images
-    write_images_settings
-
-    assert_equal %w[claude codex], complete('resume ')
-  end
-
   def test_resume_containers
-    write_images_settings
     File.write(@docker_containers, "sleepy_babbage\nzen_lovelace\n")
 
-    assert_equal %w[sleepy_babbage zen_lovelace], complete('resume claude ')
-    assert_equal %w[zen_lovelace], complete('resume claude z')
+    assert_equal %w[sleepy_babbage zen_lovelace], complete('resume ')
+    assert_equal %w[zen_lovelace], complete('resume z')
     assert_equal [['info'],
-                  ['ps', '--all', '--filter', 'status=exited', '--filter', 'label=sndbx.image=claude',
+                  ['ps', '--all', '--filter', 'status=exited', '--filter', 'label=sndbx.image',
                    '--format', '{{.Names}}']],
                  docker_calls.last(2)
   end
 
   def test_resume_completes_only_options_after_the_container
-    write_images_settings
-
-    assert_equal %w[--help -h], complete('resume claude sleepy_babbage ')
+    assert_equal %w[--help -h], complete('resume sleepy_babbage ')
   end
 
   def test_list_what

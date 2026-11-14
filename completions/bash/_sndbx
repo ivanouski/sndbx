@@ -181,12 +181,12 @@ _sndbx_images() {
   _sndbx_reply "${images[*]}"
 }
 
-# Completes the image, then its running containers, and nothing from COMMAND on
+# Completes the running sandboxes, and nothing from COMMAND on
 _sndbx_exec() {
   local -a positionals=()
   local options_done=0 count i
 
-  # Collect the positionals before the current word, skipping option values; COMMAND, the third, ends the options
+  # Collect the positionals before the current word, skipping option values; COMMAND, the second, ends the options
   for (( i = 2; i < COMP_CWORD; i++ )); do
     if (( options_done )); then
       positionals+=("${COMP_WORDS[i]}")
@@ -202,36 +202,30 @@ _sndbx_exec() {
       -*) ;;
       *) positionals+=("${COMP_WORDS[i]}") ;;
     esac
-    (( ${#positionals[@]} >= 3 )) && break
+    (( ${#positionals[@]} >= 2 )) && break
   done
   count=${#positionals[@]}
 
-  if (( count >= 3 )) || [[ "${prev}" == -u || "${prev}" == --user ]]; then
+  if (( count >= 2 )) || [[ "${prev}" == -u || "${prev}" == --user ]]; then
     return 0
   elif [[ "${cur}" == -* ]] && (( ! options_done )); then
     _sndbx_reply '-u --user -h --help'
   elif (( count == 0 )); then
-    _sndbx_reply_list configured
-  elif (( count == 1 )); then
-    _sndbx_reply_list running "${positionals[0]}"
+    _sndbx_reply_list running
   fi
 }
 
-# Completes the image, then its stopped containers
+# Completes the stopped sandboxes
 _sndbx_resume() {
   local -a positionals=()
-  local count
   _sndbx_positionals
-  count=${#positionals[@]}
 
-  if (( count >= 2 )); then
+  if (( ${#positionals[@]} )); then
     return 0
   elif [[ "${cur}" == -* ]]; then
     _sndbx_reply '-h --help'
-  elif (( count == 0 )); then
-    _sndbx_reply_list configured
   else
-    _sndbx_reply_list stopped "${positionals[0]}"
+    _sndbx_reply_list stopped
   fi
 }
 
